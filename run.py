@@ -1,6 +1,6 @@
 from app_init import create_app, db # Import from app_init.py in root
-from models.models import TaskDefinition, TaskInstance, RecurrenceRule # Import RecurrenceRule
-from services import generate_task_instances # Import the service
+from models.models import TaskDefinition, TaskInstance, RecurrenceRule, Setting # Import RecurrenceRule and Setting
+from services import generate_task_instances, DEFAULT_MAX_INSTANCES_TO_GENERATE, DEFAULT_MAX_ADVANCE_GENERATION_MONTHS # Import the service and defaults
 from flask import jsonify, request, send_from_directory # Keep send_from_directory
 import os
 from datetime import datetime, timezone # Import datetime and timezone
@@ -195,6 +195,66 @@ def complete_task_instance(id):
     db.session.commit()
     return jsonify(instance.to_dict())
 
+# --- Settings API Endpoints ---
+@app.route('/api/settings', methods=['GET'])
+def get_settings():
+    settings_db = Setting.query.all()
+    settings_map = {s.key: s.value for s in settings_db}
+    # Ensure defaults are present if not in DB for the frontend
+    if 'MAX_INSTANCES_TO_GENERATE' not in settings_map:
+        settings_map['MAX_INSTANCES_TO_GENERATE'] = str(DEFAULT_MAX_INSTANCES_TO_GENERATE)
+    if 'MAX_ADVANCE_GENERATION_MONTHS' not in settings_map:
+        settings_map['MAX_ADVANCE_GENERATION_MONTHS'] = str(DEFAULT_MAX_ADVANCE_GENERATION_MONTHS)
+    return jsonify(settings_map)
+
+@app.route('/api/settings', methods=['POST'])
+def update_settings():
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+
+    allowed_keys = ['MAX_INSTANCES_TO_GENERATE', 'MAX_ADVANCE_GENERATION_MONTHS']
+    updated_count = 0
+
+    for key, value in data.items():
+        if key in allowed_keys:
+            # Basic validation: ensure value is a positive integer string
+            try:
+                if int(value) < 0:
+                    return jsonify({'error': f'Invalid value for {key}: must be non-negative'}), 400
+                value_str = str(value) # Store as string
+            except ValueError:
+                return jsonify({'error': f'Invalid value for {key}: must be an integer'}), 400
+            
+            setting = db.session.get(Setting, key)
+            if setting:
+                setting.value = value_str
+            else:
+                setting = Setting(key=key, value=value_str)
+                db.session.add(setting)
+            updated_count += 1
+        else:
+            return jsonify({'error': f'Unknown setting key: {key}'}), 400
+
+    if updated_count > 0:
+        db.session.commit()
+        return jsonify({'message': f'{updated_count} setting(s) updated successfully'}), 200
+    else:
+        return jsonify({'message': 'No settings were updated'}), 200
+
+# Function to bootstrap settings
+def bootstrap_settings():
+    defaults = {
+        'MAX_INSTANCES_TO_GENERATE': str(DEFAULT_MAX_INSTANCES_TO_GENERATE),
+        'MAX_ADVANCE_GENERATION_MONTHS': str(DEFAULT_MAX_ADVANCE_GENERATION_MONTHS)
+    }
+    for key, value_str in defaults.items():
+        setting = db.session.get(Setting, key)
+        if not setting:
+            new_setting = Setting(key=key, value=value_str)
+            db.session.add(new_setting)
+    db.session.commit()
+
 # --- Static File Serving (for Preact frontend) ---
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -210,4 +270,5 @@ def serve_static(path):
 if __name__ == '__main__':
     with app.app_context(): # Ensure db operations have app context
         db.create_all() # Creates the database table if it doesn't exist
+        bootstrap_settings() # Call bootstrap function
     app.run(debug=True) 

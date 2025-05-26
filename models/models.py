@@ -84,4 +84,17 @@ class TaskInstance(db.Model):
             'due_date': self.due_date.isoformat(),
             'completion_date': self.completion_date.isoformat() if self.completion_date else None,
             'status': self.status
+        }
+
+class Setting(db.Model):
+    key = db.Column(db.String(50), primary_key=True)
+    value = db.Column(db.String(255), nullable=False)
+
+    def __repr__(self):
+        return f'<Setting {self.key}={self.value}>'
+
+    def to_dict(self):
+        return {
+            'key': self.key,
+            'value': self.value
         } 

@@ -1,9 +1,19 @@
 from datetime import datetime, timedelta, date
-from models.models import TaskInstance, RecurrenceRule # Assuming models.py is in a 'models' package
+from models.models import TaskInstance, RecurrenceRule, Setting # Import Setting
 from app_init import db # Assuming db is initialized in app_init.py
 
-MAX_INSTANCES_TO_GENERATE = 4
-MAX_ADVANCE_GENERATION_MONTHS = 13
+# Default values, to be overridden by DB settings if they exist
+DEFAULT_MAX_INSTANCES_TO_GENERATE = 4
+DEFAULT_MAX_ADVANCE_GENERATION_MONTHS = 13
+
+def get_setting_value(key, default_value):
+    setting = db.session.get(Setting, key)
+    if setting:
+        try:
+            return int(setting.value) # Assuming numeric settings for now
+        except ValueError:
+            return default_value # Fallback if value is not an int
+    return default_value
 
 def generate_task_instances(task_def, is_new_definition=True):
     """
@@ -11,6 +21,9 @@ def generate_task_instances(task_def, is_new_definition=True):
     If is_new_definition is True, it generates all initial instances.
     If False (e.g., for a nightly job), it might only generate upcoming ones or fill gaps.
     """
+    max_instances = get_setting_value('MAX_INSTANCES_TO_GENERATE', DEFAULT_MAX_INSTANCES_TO_GENERATE)
+    max_advance_months = get_setting_value('MAX_ADVANCE_GENERATION_MONTHS', DEFAULT_MAX_ADVANCE_GENERATION_MONTHS)
+
     if not task_def.recurrence_rule:
         return # Not a recurring task
 
@@ -32,7 +45,7 @@ def generate_task_instances(task_def, is_new_definition=True):
     # Ensure we don't generate too far into the future, e.g., 13 months from today
     # This is a simple way to cap generation for all rule types for now.
     # For annual tasks specifically, we'd only generate one if it falls within this window.
-    overall_end_date_cap = today + timedelta(days=MAX_ADVANCE_GENERATION_MONTHS * 30) # Approximate
+    overall_end_date_cap = today + timedelta(days=max_advance_months * 30) # Approximate
 
     current_check_date = today
 
@@ -48,7 +61,7 @@ def generate_task_instances(task_def, is_new_definition=True):
             days_ahead += 7
         next_due_date_dt = datetime(current_check_date.year, current_check_date.month, current_check_date.day) + timedelta(days=days_ahead)
 
-        while generated_count < MAX_INSTANCES_TO_GENERATE and next_due_date_dt.date() <= overall_end_date_cap:
+        while generated_count < max_instances and next_due_date_dt.date() <= overall_end_date_cap:
             # Check if an instance for this due date already exists (e.g. if not is_new_definition)
             exists = TaskInstance.query.filter_by(task_definition_id=task_def.id, due_date=next_due_date_dt).first()
             if not exists:
@@ -71,9 +84,9 @@ def generate_task_instances(task_def, is_new_definition=True):
         processed_months = 0
         # Limit how many months we iterate to avoid infinite loops with invalid day (e.g. 31st in Feb)
         # and to respect overall_end_date_cap
-        max_months_to_check = MAX_ADVANCE_GENERATION_MONTHS + 2 # a little buffer
+        max_months_to_check = max_advance_months + 2 # a little buffer
 
-        while generated_count < MAX_INSTANCES_TO_GENERATE and processed_months < max_months_to_check:
+        while generated_count < max_instances and processed_months < max_months_to_check:
             year, month = check_month_dt.year, check_month_dt.month
             try:
                 # Attempt to create the date for the target day in the current check_month_dt

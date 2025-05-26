@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'preact/hooks';
 
+// Placeholder for Router/Link components if we add routing later
+// For now, we'll manage page display with state
+
 // Modal Component (Bulma styled)
 function Modal({ isOpen, onClose, children, title }) {
   if (!isOpen) return null;
@@ -262,12 +265,103 @@ function TaskDefinitionItem({ definition, onDelete }) {
   );
 }
 
+// --- Settings Page Component ---
+function SettingsPage() {
+  const [settings, setSettings] = useState({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState('');
+
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(res => res.ok ? res.json() : Promise.reject('Failed to load settings'))
+      .then(data => {
+        setSettings(data);
+        setIsLoading(false);
+      })
+      .catch(err => {
+        setError(typeof err === 'string' ? err : (err.error || 'Could not fetch settings.'));
+        setIsLoading(false);
+      });
+  }, []);
+
+  const handleChange = (key, value) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = async () => {
+    setError(null);
+    setSuccessMessage('');
+    try {
+      // Filter out any non-string values or empty strings if necessary, backend expects strings
+      const payload = {
+        MAX_INSTANCES_TO_GENERATE: String(settings.MAX_INSTANCES_TO_GENERATE || '4'),
+        MAX_ADVANCE_GENERATION_MONTHS: String(settings.MAX_ADVANCE_GENERATION_MONTHS || '13'),
+      };
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to save settings');
+      setSuccessMessage(result.message || 'Settings saved successfully!');
+    } catch (err) {
+      setError(err.message || 'Could not save settings.');
+    }
+  };
+
+  if (isLoading) return <div class="notification is-info is-light">Loading settings... <progress class="progress is-small is-info" max="100"></progress></div>;
+  if (error && !isLoading) return <div class="notification is-danger">Error: {error}</div>;
+
+  const RenderSettingField = ({ label, id, value, onChange, helpText }) => (
+    <div class="field">
+      <label class="label" htmlFor={id}>{label}</label>
+      <div class="control">
+        <input class="input" type="number" id={id} value={value} onChange={e => onChange(id, e.currentTarget.value)} />
+      </div>
+      {helpText && <p class="help">{helpText}</p>}
+    </div>
+  );
+
+  return (
+    <section class="section">
+      <h2 class="title is-3">Application Settings</h2>
+      {successMessage && <div class="notification is-success is-light">{successMessage}</div>}
+      {error && <div class="notification is-danger is-light">{error}</div>} {/* Re-display error if save fails */}
+      
+      <RenderSettingField 
+        label="Max Future Task Instances to Generate"
+        id="MAX_INSTANCES_TO_GENERATE"
+        value={settings.MAX_INSTANCES_TO_GENERATE || ''} 
+        onChange={handleChange}
+        helpText="Number of future instances to create for a recurring task (e.g., 4)."
+      />
+      <RenderSettingField 
+        label="Max Months in Advance to Generate Tasks"
+        id="MAX_ADVANCE_GENERATION_MONTHS"
+        value={settings.MAX_ADVANCE_GENERATION_MONTHS || ''} 
+        onChange={handleChange}
+        helpText="How many months ahead to generate instances (e.g., 13)."
+      />
+      <div class="field is-grouped is-grouped-right" style={{marginTop: '1.5em'}}>
+        <div class="control">
+          <button class="button is-primary" onClick={handleSave}>Save Settings</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// --- Main App Component with Navbar and Page State ---
 export function App() {
   const [taskInstances, setTaskInstances] = useState([]);
   const [taskDefinitions, setTaskDefinitions] = useState([]);
-  const [isLoading, setIsLoading] = useState(true); // Simplified loading state
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isNavbarActive, setIsNavbarActive] = useState(false); // For hamburger menu
+  const [currentPage, setCurrentPage] = useState('home'); // 'home' or 'settings'
 
   const fetchData = () => {
     setIsLoading(true);
@@ -298,6 +392,9 @@ export function App() {
   };
 
   useEffect(fetchData, []);
+  useEffect(() => { // Effect to close navbar when page changes
+    setIsNavbarActive(false);
+  }, [currentPage]);
 
   const handleTaskDefinitionAdded = () => {
     fetchData(); // Refetch all data
@@ -335,66 +432,101 @@ export function App() {
     }
   };
 
+  const renderPage = () => {
+    switch (currentPage) {
+      case 'settings':
+        return <SettingsPage />;
+      case 'home':
+      default:
+        return (
+          <>
+            <div class="level mb-5">
+              <div class="level-left">
+                <div class="level-item">
+                  <h2 class="title is-3">Due Soon</h2>
+                </div>
+              </div>
+            </div>
+            
+            {error && <div class="notification is-danger">{error}</div>}
+            {isLoading && <div class="notification is-info is-light">Loading tasks... <progress class="progress is-small is-info" max="100"></progress></div>}
+
+            {!isLoading && taskInstances.length === 0 && (
+              <div class="notification is-warning">No task instances found. Try adding a task definition!</div>
+            )}
+            
+            {!isLoading && taskInstances.length > 0 && (
+              <div class="mb-6">
+                {taskInstances.map(instance => (
+                  <TaskInstanceItem key={instance.id} instance={instance} onComplete={handleCompleteTaskInstance} />
+                ))}
+              </div>
+            )}
+
+            <hr />
+            <div class="mt-6">
+              <h3 class="title is-4">Task Definitions (for Debugging/Management)</h3>
+              {isLoading && <p>Loading definitions...</p>}
+              {!isLoading && taskDefinitions.length === 0 && (
+                <p>No task definitions yet.</p>
+              )}
+              {!isLoading && taskDefinitions.length > 0 && (
+                <div class="is-flex is-flex-direction-column">
+                  {taskDefinitions.map(def => (
+                    <TaskDefinitionItem key={def.id} definition={def} onDelete={handleDeleteTaskDefinition} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        );
+    }
+  };
+
   return (
-    <section class="section" style={{fontFamily: "'Rajdhani', sans-serif"}}>
-      <div class="container">
-        <div class="has-text-centered mb-5">
-          <h1 class="title is-1">
-            <span role="img" aria-label="home icon">🏠</span> Home Bot <span role="img" aria-label="robot icon">🤖</span>
-          </h1>
+    <div style={{fontFamily: "'Rajdhani', sans-serif"}}>
+      <nav class="navbar navbar-neon-purple" role="navigation" aria-label="main navigation">
+        <div class="navbar-brand">
+          <a class="navbar-item" href="#" onClick={() => setCurrentPage('home') } style={{fontSize: '1.5rem'}}>
+            <span role="img" aria-label="robot icon" style={{marginRight: '0.5em'}}>🤖</span> Home Bot
+          </a>
+          <a role="button" class={`navbar-burger burger ${isNavbarActive ? 'is-active' : ''}`} 
+             aria-label="menu" aria-expanded={isNavbarActive} onClick={() => setIsNavbarActive(!isNavbarActive)}>
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+          </a>
         </div>
-
-        <div class="level mb-5">
-            <div class="level-left">
-                <div class="level-item">
-                    <h2 class="title is-3">Due Soon</h2>
-                </div>
-            </div>
-            <div class="level-right">
-                <div class="level-item">
-                    <button class="button is-primary is-medium" onClick={() => setIsModalOpen(true)}>
-                      Add New Task Definition
-                    </button>
-                </div>
-            </div>
-        </div>
-        
-
-        {error && <div class="notification is-danger">{error}</div>}
-        {isLoading && <div class="notification is-info is-light">Loading tasks... <progress class="progress is-small is-info" max="100"></progress></div>}
-
-        {!isLoading && taskInstances.length === 0 && (
-          <div class="notification is-warning">No task instances found. Try adding a task definition!</div>
-        )}
-        
-        {!isLoading && taskInstances.length > 0 && (
-          <div class="mb-6">
-            {taskInstances.map(instance => (
-              <TaskInstanceItem key={instance.id} instance={instance} onComplete={handleCompleteTaskInstance} />
-            ))}
+        <div class={`navbar-menu ${isNavbarActive ? 'is-active' : ''}`}>
+          <div class="navbar-start">
+            <a class="navbar-item" href="#" onClick={() => setCurrentPage('home') }>
+              Home
+            </a>
+            <a class="navbar-item" href="#" onClick={() => setCurrentPage('settings') }>
+              Settings
+            </a>
           </div>
-        )}
-
-        <hr />
-        <div class="mt-6">
-          <h3 class="title is-4">Task Definitions (for Debugging/Management)</h3>
-          {isLoading && <p>Loading definitions...</p>}
-          {!isLoading && taskDefinitions.length === 0 && (
-            <p>No task definitions yet.</p>
-          )}
-          {!isLoading && taskDefinitions.length > 0 && (
-            <div class="is-flex is-flex-direction-column">
-              {taskDefinitions.map(def => (
-                <TaskDefinitionItem key={def.id} definition={def} onDelete={handleDeleteTaskDefinition} />
-              ))}
+          <div class="navbar-end">
+            <div class="navbar-item">
+              <div class="buttons">
+                <button class="button is-light" onClick={() => setIsModalOpen(true)}>
+                  <strong>New</strong>
+                </button>
+              </div>
             </div>
-          )}
+          </div>
         </div>
+      </nav>
 
-        <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Add New Task Definition">
-          <TaskDefinitionForm onTaskDefinitionAdded={handleTaskDefinitionAdded} closeModal={() => setIsModalOpen(false)} />
-        </Modal>
-      </div>
-    </section>
+      <section class="section">
+        <div class="container">
+          {renderPage()}
+        </div>
+      </section>
+
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Add New Task Definition">
+        <TaskDefinitionForm onTaskDefinitionAdded={handleTaskDefinitionAdded} closeModal={() => setIsModalOpen(false)} />
+      </Modal>
+    </div>
   );
 } 
