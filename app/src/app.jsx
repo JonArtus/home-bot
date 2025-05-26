@@ -1,34 +1,35 @@
 import { useState, useEffect } from 'preact/hooks';
 
-// Basic Modal Component (can be moved to its own file later)
-function Modal({ isOpen, onClose, children }) {
+// Modal Component (Bulma styled)
+function Modal({ isOpen, onClose, children, title }) {
   if (!isOpen) return null;
-
   return (
-    <div class="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div class="bg-gray-800 p-6 rounded-lg shadow-xl max-w-md w-full overflow-y-auto max-h-[90vh]">
-        {children}
-        <button 
-          onClick={onClose} 
-          class="mt-4 bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded w-full"
-        >
-          Close
-        </button>
+    <div class="modal is-active">
+      <div class="modal-background" onClick={onClose}></div>
+      <div class="modal-card">
+        <header class="modal-card-head">
+          <p class="modal-card-title">{title || 'Modal'}</p>
+          <button class="delete" aria-label="close" onClick={onClose}></button>
+        </header>
+        <section class="modal-card-body">
+          {children}
+        </section>
+        {/* Footer can be added here if needed, e.g., for form submission buttons if not in children */}
       </div>
     </div>
   );
 }
 
-// Updated TaskForm for TaskDefinition with DueDate
+// TaskDefinitionForm (Bulma styled)
 function TaskDefinitionForm({ onTaskDefinitionAdded, closeModal }) {
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
   const [priority, setPriority] = useState('Medium');
-  const [taskType, setTaskType] = useState('one-off'); // 'one-off' or 'recurring'
+  const [taskType, setTaskType] = useState('one-off');
   const [dueDate, setDueDate] = useState('');
-  const [recurrenceRuleType, setRecurrenceRuleType] = useState('weekly'); // 'weekly', 'monthly'
-  const [weeklyDay, setWeeklyDay] = useState(1); // 1 for Monday, ..., 7 for Sunday
-  const [monthlyDay, setMonthlyDay] = useState(1); // 1-31
+  const [recurrenceRuleType, setRecurrenceRuleType] = useState('weekly');
+  const [weeklyDay, setWeeklyDay] = useState(1);
+  const [monthlyDay, setMonthlyDay] = useState(1);
   const [error, setError] = useState('');
 
   const handleSubmit = async (e) => {
@@ -47,23 +48,22 @@ function TaskDefinitionForm({ onTaskDefinitionAdded, closeModal }) {
         return;
       }
       try {
-        const dateObj = new Date(dueDate + "T00:00:00Z");
-        taskData.due_date = dateObj.toISOString();
+        taskData.due_date = new Date(dueDate + "T00:00:00Z").toISOString();
       } catch (dateError) {
         setError('Invalid date format for Due Date.');
         return;
       }
-    } else { // recurring
+    } else {
       let recurrence_rule = { rule_type: recurrenceRuleType };
       if (recurrenceRuleType === 'weekly') {
         if (!weeklyDay || weeklyDay < 1 || weeklyDay > 7) {
-          setError('Please select a valid day for weekly recurrence (1-7).');
+          setError('Valid day (1-7) for weekly recurrence.');
           return;
         }
         recurrence_rule.weekly_recurring_day = parseInt(weeklyDay, 10);
       } else if (recurrenceRuleType === 'monthly') {
         if (!monthlyDay || monthlyDay < 1 || monthlyDay > 31) {
-          setError('Please select a valid day for monthly recurrence (1-31).');
+          setError('Valid day (1-31) for monthly recurrence.');
           return;
         }
         recurrence_rule.monthly_recurring_day = parseInt(monthlyDay, 10);
@@ -79,11 +79,11 @@ function TaskDefinitionForm({ onTaskDefinitionAdded, closeModal }) {
       });
       if (!response.ok) {
         const errData = await response.json();
-        throw new Error(errData.error || 'Failed to create task definition');
+        throw new Error(errData.error || 'Failed to create task');
       }
       const newTaskDef = await response.json();
       onTaskDefinitionAdded(newTaskDef);
-      // Reset form
+      // Reset form fields
       setDescription('');
       setCategory('');
       setPriority('Medium');
@@ -98,201 +98,221 @@ function TaskDefinitionForm({ onTaskDefinitionAdded, closeModal }) {
       setError(err.message || "Error creating task. Please try again.");
     }
   };
+  
+  // Helper to render form fields consistently with Bulma
+  const RenderField = ({ label, id, children, helpText }) => (
+    <div class="field">
+      <label class="label" htmlFor={id}>{label}</label>
+      <div class="control">
+        {children}
+      </div>
+      {helpText && <p class="help">{helpText}</p>}
+    </div>
+  );
 
   return (
-    <form onSubmit={handleSubmit} class="space-y-4">
-      <h2 class="text-2xl font-semibold text-white mb-4">Add New Task Definition</h2>
-      {error && <p class="text-red-400 bg-red-900 p-2 rounded">{error}</p>}
-      <div>
-        <label htmlFor="description" class="block text-sm font-medium text-gray-300">Description *</label>
-        <input 
-          type="text" 
-          id="description" 
-          value={description} 
-          onInput={e => setDescription(e.currentTarget.value)} 
-          class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm text-white"
-          required
-        />
-      </div>
-      <div>
-        <label htmlFor="category" class="block text-sm font-medium text-gray-300">Category</label>
-        <input 
-          type="text" 
-          id="category" 
-          value={category} 
-          onInput={e => setCategory(e.currentTarget.value)} 
-          class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm text-white"
-        />
-      </div>
-      <div>
-        <label htmlFor="priority" class="block text-sm font-medium text-gray-300">Priority</label>
-        <select 
-          id="priority" 
-          value={priority} 
-          onChange={e => setPriority(e.currentTarget.value)} 
-          class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm text-white"
-        >
-          <option>Low</option>
-          <option>Medium</option>
-          <option>High</option>
-          <option>Urgent</option>
-        </select>
-      </div>
-      <div>
-        <label htmlFor="task_type" class="block text-sm font-medium text-gray-300">Task Type</label>
-        <select 
-          id="task_type" 
-          value={taskType} 
-          onChange={e => setTaskType(e.currentTarget.value)} 
-          class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm text-white"
-        >
-          <option value="one-off">One-off Task</option>
-          <option value="recurring">Recurring Task</option>
-        </select>
-      </div>
-      {taskType === 'one-off' && (
-        <div>
-          <label htmlFor="due_date" class="block text-sm font-medium text-gray-300">Due Date *</label>
-          <input 
-            type="date" 
-            id="due_date" 
-            value={dueDate} 
-            onInput={e => setDueDate(e.currentTarget.value)} 
-            class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm text-white"
-            required
-          />
+    <form onSubmit={handleSubmit}>
+      {error && <div class="notification is-danger">{error}</div>}
+      
+      <RenderField label="Description *" id="desc">
+        <input type="text" id="desc" value={description} onInput={e => setDescription(e.currentTarget.value)} required class="input" />
+      </RenderField>
+      <RenderField label="Category" id="cat">
+        <input type="text" id="cat" value={category} onInput={e => setCategory(e.currentTarget.value)} class="input" />
+      </RenderField>
+      <RenderField label="Priority" id="prio">
+        <div class="select is-fullwidth">
+          <select id="prio" value={priority} onChange={e => setPriority(e.currentTarget.value)}>
+            <option value="Low">Low</option>
+            <option value="Medium">Medium</option>
+            <option value="High">High</option>
+            <option value="Urgent">Urgent</option>
+          </select>
         </div>
+      </RenderField>
+      <RenderField label="Task Type" id="type">
+        <div class="select is-fullwidth">
+          <select id="type" value={taskType} onChange={e => setTaskType(e.currentTarget.value)}>
+            <option value="one-off">One-off</option>
+            <option value="recurring">Recurring</option>
+          </select>
+        </div>
+      </RenderField>
+
+      {taskType === 'one-off' && (
+        <RenderField label="Due Date *" id="dueD">
+          <input type="date" id="dueD" value={dueDate} onInput={e => setDueDate(e.currentTarget.value)} class="input" required />
+        </RenderField>
       )}
       {taskType === 'recurring' && (
-        <div class="p-3 border border-gray-700 rounded-md space-y-3">
-          <h3 class="text-lg font-medium text-gray-200">Recurrence Rule</h3>
-          <div>
-            <label htmlFor="recurrence_rule_type" class="block text-sm font-medium text-gray-300">Rule Type</label>
-            <select 
-              id="recurrence_rule_type" 
-              value={recurrenceRuleType} 
-              onChange={e => setRecurrenceRuleType(e.currentTarget.value)} 
-              class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm text-white"
-            >
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          </div>
-          {recurrenceRuleType === 'weekly' && (
-            <div>
-              <label htmlFor="weekly_day" class="block text-sm font-medium text-gray-300">Day of the Week (1=Mon, 7=Sun)</label>
-              <input 
-                type="number" 
-                id="weekly_day" 
-                min="1" 
-                max="7" 
-                value={weeklyDay} 
-                onInput={e => setWeeklyDay(parseInt(e.currentTarget.value, 10))} 
-                class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm text-white"
-              />
+        <div class="box" style={{border: '1px solid #ddd', marginTop: '1em', marginBottom: '1em'}}> {/* Simple box for grouping */}
+          <p class="title is-5">Recurrence Rule</p>
+          <RenderField label="Rule Type" id="recType">
+            <div class="select is-fullwidth">
+              <select id="recType" value={recurrenceRuleType} onChange={e => setRecurrenceRuleType(e.currentTarget.value)}>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
             </div>
+          </RenderField>
+          {recurrenceRuleType === 'weekly' && (
+            <RenderField label="Day of Week (1=Mon, 7=Sun)" id="wDay">
+              <input type="number" id="wDay" min="1" max="7" value={weeklyDay} onInput={e => setWeeklyDay(parseInt(e.currentTarget.value, 10))} class="input" />
+            </RenderField>
           )}
           {recurrenceRuleType === 'monthly' && (
-            <div>
-              <label htmlFor="monthly_day" class="block text-sm font-medium text-gray-300">Day of the Month (1-31)</label>
-              <input 
-                type="number" 
-                id="monthly_day" 
-                min="1" 
-                max="31" 
-                value={monthlyDay} 
-                onInput={e => setMonthlyDay(parseInt(e.currentTarget.value, 10))} 
-                class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm text-white"
-              />
-            </div>
+            <RenderField label="Day of Month (1-31)" id="mDay">
+              <input type="number" id="mDay" min="1" max="31" value={monthlyDay} onInput={e => setMonthlyDay(parseInt(e.currentTarget.value, 10))} class="input" />
+            </RenderField>
           )}
         </div>
       )}
-      <style jsx global>{`
-        .input-style {
-          margin-top: 0.25rem; display: block; width: 100%; 
-          background-color: #374151; border-color: #4B5563; 
-          border-radius: 0.375rem; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); 
-          padding-top: 0.5rem; padding-bottom: 0.5rem; padding-left: 0.75rem; padding-right: 0.75rem; 
-          color: white;
-        }
-        .input-style:focus {
-          outline: none; ring-width: 2px; ring-color: #06B6D4; border-color: #06B6D4;
-        }
-      `}</style>
-      <button 
-        type="submit" 
-        class="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-semibold py-2 px-4 rounded"
-      >
-        Add Task Definition
-      </button>
+      <div class="field is-grouped is-grouped-right" style={{marginTop: '1.5em'}}>
+        <div class="control">
+          <button type="button" class="button is-light" onClick={closeModal}>Cancel</button>
+        </div>
+        <div class="control">
+          <button type="submit" class="button is-primary">Create Definition</button>
+        </div>
+      </div>
     </form>
+  );
+}
+
+// Task Instance Item Component (Bulma styled)
+function TaskInstanceItem({ instance, onComplete }) {
+  const { 
+    id, task_definition_description, due_date, 
+    task_definition_category, task_definition_priority, status 
+  } = instance;
+
+  const isCompleted = status === 'Completed';
+  const dueDateObj = new Date(due_date);
+  const isOverdue = !isCompleted && dueDateObj < new Date();
+
+  let cardClasses = "box"; // Bulma box for each item
+  if (isCompleted) cardClasses += " has-background-light";
+  if (isOverdue) cardClasses += " has-background-danger-light"; // Or use a border
+
+  let priorityTagClass = "tag";
+  if (task_definition_priority === 'Urgent') priorityTagClass += " is-danger";
+  else if (task_definition_priority === 'High') priorityTagClass += " is-warning";
+  else if (task_definition_priority === 'Medium') priorityTagClass += " is-info";
+  else priorityTagClass += " is-light";
+  
+  return (
+    <div class={cardClasses} style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div>
+        <p class={`title is-5 ${isCompleted ? 'has-text-grey-light' : ''}`} style={isCompleted ? {textDecoration: 'line-through'} : {}}>
+          {task_definition_description}
+        </p>
+        <div class="tags are-small">
+          <span class="tag is-info is-light">Due: {dueDateObj.toLocaleDateString()}</span>
+          {task_definition_category && <span class="tag is-light">Cat: {task_definition_category}</span>}
+          {task_definition_priority && <span class={priorityTagClass}>Prio: {task_definition_priority}</span>}
+          <span class={`tag ${isCompleted ? 'is-success' : 'is-link is-light'}`}>{status}</span>
+        </div>
+      </div>
+      {!isCompleted && (
+        <button 
+          onClick={() => onComplete(id)} 
+          class="button is-success is-outlined"
+          title="Mark as Complete"
+        >
+          <span>✔️</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Task Definition Item (Bulma styled - for debugging list)
+function TaskDefinitionItem({ definition, onDelete }) {
+  const { id, description, category, priority, due_date, recurrence_rule } = definition;
+  return (
+    <div class="box" style={{ marginBottom: '0.5rem', padding: '0.75rem' }}>
+      <div class="level">
+        <div class="level-left">
+          <div class="level-item">
+            <div>
+              <p class="title is-6">{description}</p>
+              <p class="subtitle is-7">
+                ID: {id} | Cat: {category || 'N/A'} | Prio: {priority || 'N/A'}
+              </p>
+              {due_date && <p class="is-size-7">One-off Due: {new Date(due_date).toLocaleDateString()}</p>}
+              {recurrence_rule && (
+                <p class="is-size-7">
+                  Recurring: {recurrence_rule.rule_type} 
+                  {recurrence_rule.weekly_recurring_day && ` (Day: ${recurrence_rule.weekly_recurring_day})`}
+                  {recurrence_rule.monthly_recurring_day && ` (Day: ${recurrence_rule.monthly_recurring_day})`}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+        <div class="level-right">
+          <div class="level-item">
+            <button class="button is-danger is-outlined is-small" onClick={() => onDelete(id)}>
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
 export function App() {
   const [taskInstances, setTaskInstances] = useState([]);
-  const [taskDefinitions, setTaskDefinitions] = useState([]); // For displaying task definitions
-  const [isLoadingInstances, setIsLoadingInstances] = useState(true);
-  const [isLoadingDefinitions, setIsLoadingDefinitions] = useState(true);
+  const [taskDefinitions, setTaskDefinitions] = useState([]);
+  const [isLoading, setIsLoading] = useState(true); // Simplified loading state
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const fetchTaskInstances = () => {
-    setIsLoadingInstances(true);
-    fetch('/api/task_instances')
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP error! status: ${res.status} - ${res.statusText}`);
+  const fetchData = () => {
+    setIsLoading(true);
+    setError(null);
+    Promise.all([
+      fetch('/api/task_instances').then(res => {
+        if (!res.ok) return res.json().then(err => Promise.reject(err));
+        return res.json();
+      }),
+      fetch('/api/task_definitions').then(res => {
+        if (!res.ok) return res.json().then(err => Promise.reject(err));
         return res.json();
       })
-      .then(data => {
-        setTaskInstances(data.sort((a, b) => new Date(a.due_date) - new Date(b.due_date)));
-        setError(null);
-      })
-      .catch(err => {
-        console.error("Error fetching task instances:", err);
-        setError(err.message || "Failed to load task instances.");
-        setTaskInstances([]);
-      })
-      .finally(() => setIsLoadingInstances(false));
+    ])
+    .then(([instances, definitions]) => {
+      setTaskInstances(instances.sort((a, b) => new Date(a.due_date) - new Date(b.due_date)));
+      setTaskDefinitions(definitions);
+    })
+    .catch(err => {
+      console.error("Error fetching data:", err);
+      setError(err.error || err.message || "Failed to load data. Check API server.");
+      setTaskInstances([]); // Clear data on error
+      setTaskDefinitions([]);
+    })
+    .finally(() => {
+      setIsLoading(false);
+    });
   };
 
-  const fetchTaskDefinitions = () => {
-    setIsLoadingDefinitions(true);
-    fetch('/api/task_definitions')
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP error! status: ${res.status} - ${res.statusText}`);
-        return res.json();
-      })
-      .then(data => {
-        setTaskDefinitions(data);
-      })
-      .catch(err => {
-        console.error("Error fetching task definitions:", err);
-        // Not setting main error for this, as instance list is primary
-      })
-      .finally(() => setIsLoadingDefinitions(false));
+  useEffect(fetchData, []);
+
+  const handleTaskDefinitionAdded = () => {
+    fetchData(); // Refetch all data
+    setIsModalOpen(false); // Close modal on success
   };
 
-  useEffect(() => {
-    fetchTaskInstances();
-    fetchTaskDefinitions(); // Fetch definitions as well
-  }, []);
-
-  const handleTaskDefinitionAdded = (newTaskDef) => {
-    fetchTaskInstances(); // New instances might have been created
-    fetchTaskDefinitions(); // Refresh definition list
-  };
-  
   const handleCompleteTaskInstance = async (instanceId) => {
-    setError(null); // Clear previous errors
+    setError(null);
     try {
       const response = await fetch(`/api/task_instances/${instanceId}/complete`, { method: 'PUT' });
       if (!response.ok) {
         const errData = await response.json();
         throw new Error(errData.error || 'Failed to complete task');
       }
-      fetchTaskInstances();
+      fetchData(); // Refetch to update list
     } catch (err) {
       console.error("Error completing task instance:", err);
       setError(err.message || "Error completing task.");
@@ -300,16 +320,15 @@ export function App() {
   };
 
   const handleDeleteTaskDefinition = async (defId) => {
+    if (!window.confirm("Are you sure you want to delete this task definition and all its instances?")) return;
     setError(null);
-    if (!confirm('Are you sure you want to delete this task definition and all its instances?')) return;
     try {
       const response = await fetch(`/api/task_definitions/${defId}`, { method: 'DELETE' });
       if (!response.ok) {
         const errData = await response.json();
         throw new Error(errData.error || 'Failed to delete task definition');
       }
-      fetchTaskInstances(); // Instances will be deleted by cascade
-      fetchTaskDefinitions(); // Refresh definition list
+      fetchData(); // Refetch to update list
     } catch (err) {
       console.error("Error deleting task definition:", err);
       setError(err.message || "Error deleting task definition.");
@@ -317,68 +336,65 @@ export function App() {
   };
 
   return (
-    <div class="min-h-screen bg-gray-900 text-white flex flex-col items-center pt-10 px-4 pb-20">
-      <h1 class="text-5xl font-bold mb-8 text-cyan-400">Home Bot - Task Instances</h1>
-      
-      <button 
-        onClick={() => setIsModalOpen(true)} 
-        class="mb-6 bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded shadow-lg transition duration-150 ease-in-out"
-      >
-        + Add New Task Definition
-      </button>
+    <section class="section" style={{fontFamily: "'Rajdhani', sans-serif"}}>
+      <div class="container">
+        <div class="has-text-centered mb-5">
+          <h1 class="title is-1">
+            <span role="img" aria-label="home icon">🏠</span> Home Bot <span role="img" aria-label="robot icon">🤖</span>
+          </h1>
+        </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)}>
-        <TaskDefinitionForm onTaskDefinitionAdded={handleTaskDefinitionAdded} closeModal={() => setIsModalOpen(false)} />
-      </Modal>
-
-      {error && <div class="w-full max-w-3xl mb-4 p-3 bg-red-800 text-red-200 rounded-md"><p><strong>Error:</strong> {error}</p></div>}
-
-      <div class="w-full max-w-3xl mb-12">
-        <h2 class="text-3xl font-semibold mb-6 text-gray-300">Upcoming Task Instances</h2>
-        {isLoadingInstances && <p>Loading instances...</p>}
-        {!isLoadingInstances && taskInstances.length === 0 && <p class="text-gray-500">No upcoming task instances.</p>}
-        {!isLoadingInstances && taskInstances.length > 0 && (
-          <ul class="space-y-3">
-            {taskInstances.map(inst => (
-              <li key={inst.id} class={`p-3 rounded-md shadow-md flex justify-between items-center ${inst.status === 'Completed' ? 'bg-gray-700 opacity-70' : 'bg-gray-800 hover:bg-gray-700'}`}>
-                <div>
-                  <h3 class={`text-lg font-semibold ${inst.status === 'Completed' ? 'line-through text-gray-500' : 'text-cyan-400'}`}>{inst.task_definition_description}</h3>
-                  <p class="text-xs text-gray-400">Due: {new Date(inst.due_date).toLocaleDateString()} {inst.task_definition_category && `| ${inst.task_definition_category}`} {inst.task_definition_priority && `| ${inst.task_definition_priority}`}</p>
-                  <p class={`text-xs font-medium ${inst.status === 'Completed' ? 'text-green-400' : 'text-yellow-400'}`}>{inst.status}</p>
+        <div class="level mb-5">
+            <div class="level-left">
+                <div class="level-item">
+                    <h2 class="title is-3">Due Soon</h2>
                 </div>
-                {inst.status !== 'Completed' && <button onClick={() => handleCompleteTaskInstance(inst.id)} class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-1 px-2 rounded">✓ Complete</button>}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div class="w-full max-w-3xl">
-        <h2 class="text-3xl font-semibold mb-6 text-gray-300">Task Definitions (for Debug)</h2>
-        {isLoadingDefinitions && <p>Loading definitions...</p>}
-        {!isLoadingDefinitions && taskDefinitions.length === 0 && <p class="text-gray-500">No task definitions created yet.</p>}
-        {!isLoadingDefinitions && taskDefinitions.length > 0 && (
-          <ul class="space-y-2 text-xs">
-            {taskDefinitions.map(def => (
-              <li key={def.id} class="p-2 bg-gray-800 rounded-md flex justify-between items-center">
-                <div>
-                  <p class="font-semibold text-gray-200">{def.description}</p>
-                  <p class="text-gray-400">ID: {def.id} | Cat: {def.category || 'N/A'} | Prio: {def.priority || 'N/A'}</p>
-                  {def.due_date && <p class="text-gray-400">One-off Due: {new Date(def.due_date).toLocaleDateString()}</p>}
-                  {def.recurrence_rule && (
-                    <p class="text-gray-400">
-                      Recurrence: {def.recurrence_rule.rule_type} 
-                      {def.recurrence_rule.weekly_recurring_day && ` (Day: ${def.recurrence_rule.weekly_recurring_day})`}
-                      {def.recurrence_rule.monthly_recurring_day && ` (Day: ${def.recurrence_rule.monthly_recurring_day})`}
-                    </p>
-                  )}
+            </div>
+            <div class="level-right">
+                <div class="level-item">
+                    <button class="button is-primary is-medium" onClick={() => setIsModalOpen(true)}>
+                      Add New Task Definition
+                    </button>
                 </div>
-                <button onClick={() => handleDeleteTaskDefinition(def.id)} class="bg-red-700 hover:bg-red-800 text-white text-xs font-semibold py-1 px-2 rounded">🗑️ Delete</button>
-              </li>
-            ))}
-          </ul>
+            </div>
+        </div>
+        
+
+        {error && <div class="notification is-danger">{error}</div>}
+        {isLoading && <div class="notification is-info is-light">Loading tasks... <progress class="progress is-small is-info" max="100"></progress></div>}
+
+        {!isLoading && taskInstances.length === 0 && (
+          <div class="notification is-warning">No task instances found. Try adding a task definition!</div>
         )}
+        
+        {!isLoading && taskInstances.length > 0 && (
+          <div class="mb-6">
+            {taskInstances.map(instance => (
+              <TaskInstanceItem key={instance.id} instance={instance} onComplete={handleCompleteTaskInstance} />
+            ))}
+          </div>
+        )}
+
+        <hr />
+        <div class="mt-6">
+          <h3 class="title is-4">Task Definitions (for Debugging/Management)</h3>
+          {isLoading && <p>Loading definitions...</p>}
+          {!isLoading && taskDefinitions.length === 0 && (
+            <p>No task definitions yet.</p>
+          )}
+          {!isLoading && taskDefinitions.length > 0 && (
+            <div class="is-flex is-flex-direction-column">
+              {taskDefinitions.map(def => (
+                <TaskDefinitionItem key={def.id} definition={def} onDelete={handleDeleteTaskDefinition} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Add New Task Definition">
+          <TaskDefinitionForm onTaskDefinitionAdded={handleTaskDefinitionAdded} closeModal={() => setIsModalOpen(false)} />
+        </Modal>
       </div>
-    </div>
+    </section>
   );
 } 
