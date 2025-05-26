@@ -30,7 +30,9 @@ class RecurrenceRule(db.Model):
 
 class TaskDefinition(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    description = db.Column(db.String(255), nullable=False)
+    title = db.Column(db.String(120), nullable=False) # New: Task Title
+    description = db.Column(db.String(255), nullable=True) # New: Short description
+    notes = db.Column(db.Text, nullable=True) # Old description, now for detailed notes
     category = db.Column(db.String(100))
     priority = db.Column(db.String(50)) # e.g., Urgent, High, Medium, Low
     
@@ -52,7 +54,9 @@ class TaskDefinition(db.Model):
     def to_dict(self):
         data = {
             'id': self.id,
+            'title': self.title,
             'description': self.description,
+            'notes': self.notes,
             'category': self.category,
             'priority': self.priority,
             'due_date': self.due_date.isoformat() if self.due_date else None,
@@ -77,8 +81,9 @@ class TaskInstance(db.Model):
         return {
             'id': self.id,
             'task_definition_id': self.task_definition_id,
-            # Use the new backref name 'defined_task'
-            'task_definition_description': self.defined_task.description if self.defined_task else 'N/A',
+            'task_definition_title': self.defined_task.title if self.defined_task else 'N/A', # Changed from description to title
+            'task_definition_description': self.defined_task.description if self.defined_task else None, # New short description
+            'task_definition_notes': self.defined_task.notes if self.defined_task else None, # New notes field
             'task_definition_category': self.defined_task.category if self.defined_task else None,
             'task_definition_priority': self.defined_task.priority if self.defined_task else None,
             'due_date': self.due_date.isoformat(),

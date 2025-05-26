@@ -17,8 +17,11 @@ def hello():
 @app.route('/api/task_definitions', methods=['POST'])
 def create_task_definition():
     data = request.get_json() or {}
-    if 'description' not in data or not data['description']:
-        return jsonify({'error': 'Description is required'}), 400
+    if 'title' not in data or not data['title']:
+        return jsonify({'error': 'Title is required'}), 400
+
+    # 'description' is now the short description and is optional
+    # 'notes' is for detailed notes and is optional
 
     due_date_str = data.get('due_date')
     recurrence_data = data.get('recurrence_rule')
@@ -35,7 +38,9 @@ def create_task_definition():
             return jsonify({'error': 'Invalid due_date format.'}), 400
 
     task_def = TaskDefinition(
-        description=data['description'],
+        title=data['title'],
+        description=data.get('description'), # Optional short description
+        notes=data.get('notes'),             # Optional detailed notes
         category=data.get('category'),
         priority=data.get('priority'),
         due_date=due_date_obj
@@ -89,10 +94,12 @@ def update_task_definition(id):
         return jsonify({'error': 'Task definition not found'}), 404
     
     data = request.get_json() or {}
-    if 'description' in data and not data['description']:
-         return jsonify({'error': 'Description cannot be empty'}), 400
+    if 'title' in data and not data['title']:
+         return jsonify({'error': 'Title cannot be empty'}), 400
 
-    task_def.description = data.get('description', task_def.description)
+    task_def.title = data.get('title', task_def.title)
+    task_def.description = data.get('description', task_def.description) # Update short description
+    task_def.notes = data.get('notes', task_def.notes)                   # Update notes
     task_def.category = data.get('category', task_def.category)
     task_def.priority = data.get('priority', task_def.priority)
 
