@@ -1,5 +1,5 @@
 from app_init import create_app, db # Import from app_init.py in root
-from models.models import TaskDefinition, TaskInstance, RecurrenceRule, Setting # Import RecurrenceRule and Setting
+from models.models import TaskDefinition, TaskInstance, RecurrenceRule, Setting, Category # Import RecurrenceRule, Setting, and Category
 from services import generate_task_instances, DEFAULT_MAX_INSTANCES_TO_GENERATE, DEFAULT_MAX_ADVANCE_GENERATION_MONTHS # Import the service and defaults
 from flask import jsonify, request, send_from_directory # Keep send_from_directory
 import os
@@ -12,6 +12,56 @@ app = create_app() # Create app instance using the factory
 def hello():
     return jsonify(message="Hello from updated Flask app!")
 
+# --- Category API Endpoints ---
+@app.route('/api/categories', methods=['GET'])
+def get_categories():
+    categories = Category.query.order_by(Category.short_name).all()
+    return jsonify([cat.to_dict() for cat in categories])
+
+@app.route('/api/categories', methods=['POST'])
+def create_category():
+    data = request.get_json() or {}
+    if not data.get('short_name'):
+        return jsonify({'error': 'Short name is required'}), 400
+    
+    # Prevent changing short_name (PK) via POST, should be via specific endpoint if ever needed
+    # For now, we assume short_name is immutable once created.
+    if db.session.get(Category, data['short_name']):
+         return jsonify({'error': 'Category with this short name already exists'}), 409
+
+    new_category = Category(short_name=data['short_name'], icon=data.get('icon'))
+    db.session.add(new_category)
+    db.session.commit()
+    return jsonify(new_category.to_dict()), 201
+
+@app.route('/api/categories/<string:short_name>', methods=['PUT'])
+def update_category(short_name):
+    category = db.session.get(Category, short_name)
+    if not category:
+        return jsonify({'error': 'Category not found'}), 404
+    data = request.get_json() or {}
+    # Only icon is updatable for now, short_name is PK and shouldn't be changed here.
+    # If short_name were to be changed, it would be a more complex operation (new record, update FKs, delete old).
+    if 'icon' in data:
+        category.icon = data['icon']
+    # Add other updatable fields here if necessary
+    db.session.commit()
+    return jsonify(category.to_dict())
+
+@app.route('/api/categories/<string:short_name>', methods=['DELETE'])
+def delete_category(short_name):
+    category = db.session.get(Category, short_name)
+    if not category:
+        return jsonify({'error': 'Category not found'}), 404
+    
+    # Check if category is in use by any TaskDefinition
+    if category.task_definitions:
+        return jsonify({'error': 'Category is in use and cannot be deleted. Please reassign tasks first.'}), 400
+
+    db.session.delete(category)
+    db.session.commit()
+    return jsonify({'message': 'Category deleted'}), 200
+
 # --- TaskDefinition CRUD API Endpoints ---
 
 @app.route('/api/task_definitions', methods=['POST'])
@@ -20,28 +70,28 @@ def create_task_definition():
     if 'title' not in data or not data['title']:
         return jsonify({'error': 'Title is required'}), 400
 
-    # 'description' is now the short description and is optional
-    # 'notes' is for detailed notes and is optional
-
+    category_short_name = data.get('category_short_name')
+    if category_short_name:
+        category_obj = db.session.get(Category, category_short_name)
+        if not category_obj:
+            return jsonify({'error': f'Category "{category_short_name}" not found.'}), 400
+    
     due_date_str = data.get('due_date')
     recurrence_data = data.get('recurrence_rule')
-
     if due_date_str and recurrence_data:
         return jsonify({'error': 'Cannot have both due_date and recurrence_rule.'}), 400
-
     due_date_obj = None
     if due_date_str:
         try:
             due_date_obj = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
             if due_date_obj.tzinfo is None: due_date_obj = due_date_obj.replace(tzinfo=timezone.utc)
-        except ValueError:
-            return jsonify({'error': 'Invalid due_date format.'}), 400
+        except ValueError: return jsonify({'error': 'Invalid due_date format.'}), 400
 
     task_def = TaskDefinition(
         title=data['title'],
-        description=data.get('description'), # Optional short description
-        notes=data.get('notes'),             # Optional detailed notes
-        category=data.get('category'),
+        description=data.get('description'),
+        notes=data.get('notes'),
+        category_short_name=category_short_name,
         priority=data.get('priority'),
         due_date=due_date_obj
     )
@@ -50,15 +100,8 @@ def create_task_definition():
 
     if recurrence_data:
         rule_type = recurrence_data.get('rule_type')
-        if not rule_type:
-            return jsonify({'error': 'Recurrence rule_type is required.'}), 400
-        
-        new_recurrence_rule = RecurrenceRule(
-            task_definition=task_def, # Associate with the task_def directly
-            rule_type=rule_type,
-            weekly_recurring_day=recurrence_data.get('weekly_recurring_day'),
-            monthly_recurring_day=recurrence_data.get('monthly_recurring_day')
-        )
+        if not rule_type: return jsonify({'error': 'Recurrence rule_type is required.'}), 400
+        new_recurrence_rule = RecurrenceRule(task_definition=task_def, rule_type=rule_type, weekly_recurring_day=recurrence_data.get('weekly_recurring_day'), monthly_recurring_day=recurrence_data.get('monthly_recurring_day'))
         db.session.add(new_recurrence_rule)
         # task_def.recurrence_rule = new_recurrence_rule # This is handled by backref if task_definition=task_def used
         db.session.flush() # Ensure rule is associated and task_def.id is available
@@ -100,9 +143,20 @@ def update_task_definition(id):
     task_def.title = data.get('title', task_def.title)
     task_def.description = data.get('description', task_def.description) # Update short description
     task_def.notes = data.get('notes', task_def.notes)                   # Update notes
-    task_def.category = data.get('category', task_def.category)
     task_def.priority = data.get('priority', task_def.priority)
 
+    if 'category_short_name' in data:
+        new_cat_short_name = data['category_short_name']
+        if new_cat_short_name:
+            category_obj = db.session.get(Category, new_cat_short_name)
+            if not category_obj:
+                return jsonify({'error': f'Category "{new_cat_short_name}" not found.'}), 400
+            task_def.category_short_name = new_cat_short_name
+            task_def.defined_category = category_obj # Ensure relationship is updated if accessed before commit
+        else: # explicitly setting category to null
+            task_def.category_short_name = None
+            task_def.defined_category = None # Ensure relationship is updated
+            
     due_date_str = data.get('due_date')
     recurrence_data = data.get('recurrence_rule')
 
@@ -193,7 +247,7 @@ def complete_task_instance(id):
     if instance is None:
         return jsonify({'error': 'Task instance not found'}), 404
     
-    # Idempotency: if already completed, do nothing or return current state
+    # Idempotency: if already completed, do nothing or return current state with 200 OK
     if instance.status == 'Completed':
         return jsonify(instance.to_dict()), 200 
 
@@ -216,22 +270,25 @@ def get_settings():
 
 @app.route('/api/settings', methods=['POST'])
 def update_settings():
-    data = request.get_json()
+    data = request.get_json() or {}
     if not data:
         return jsonify({'error': 'No data provided'}), 400
 
-    allowed_keys = ['MAX_INSTANCES_TO_GENERATE', 'MAX_ADVANCE_GENERATION_MONTHS']
-    updated_count = 0
+    allowed_keys = {'MAX_INSTANCES_TO_GENERATE', 'MAX_ADVANCE_GENERATION_MONTHS'} # Use a set for efficient lookup
+    updated_settings = []
+    errors = [] 
 
     for key, value in data.items():
         if key in allowed_keys:
-            # Basic validation: ensure value is a positive integer string
             try:
-                if int(value) < 0:
-                    return jsonify({'error': f'Invalid value for {key}: must be non-negative'}), 400
-                value_str = str(value) # Store as string
+                val_int = int(value)
+                if val_int < 0:
+                    errors.append(f'Invalid value for {key}: must be a non-negative integer.')
+                    continue 
+                value_str = str(val_int) # Store as string, but validated as int
             except ValueError:
-                return jsonify({'error': f'Invalid value for {key}: must be an integer'}), 400
+                errors.append(f'Invalid value for {key}: must be an integer.')
+                continue
             
             setting = db.session.get(Setting, key)
             if setting:
@@ -239,15 +296,19 @@ def update_settings():
             else:
                 setting = Setting(key=key, value=value_str)
                 db.session.add(setting)
-            updated_count += 1
+            updated_settings.append(key) # Keep track of what was processed
         else:
-            return jsonify({'error': f'Unknown setting key: {key}'}), 400
+            # It might be better to collect all unknown keys and report once
+            errors.append(f'Unknown or not-allowed setting key: {key}')
+    
+    if errors:
+        return jsonify({'error': 'Failed to update settings.', 'details': errors}), 400
 
-    if updated_count > 0:
+    if updated_settings:
         db.session.commit()
-        return jsonify({'message': f'{updated_count} setting(s) updated successfully'}), 200
+        return jsonify({'message': f'{len(updated_settings)} setting(s) updated successfully: {", ".join(updated_settings)}'}), 200
     else:
-        return jsonify({'message': 'No settings were updated'}), 200
+        return jsonify({'message': 'No valid settings were provided for update.'}), 200 # Or 400 if no valid keys were sent
 
 # Function to bootstrap settings
 def bootstrap_settings():
@@ -260,6 +321,9 @@ def bootstrap_settings():
         if not setting:
             new_setting = Setting(key=key, value=value_str)
             db.session.add(new_setting)
+    # Bootstrap Default Category
+    if not db.session.get(Category, 'Default'):
+        db.session.add(Category(short_name='Default', icon='📑')) # Default icon: Bookmark Tabs emoji
     db.session.commit()
 
 # --- Static File Serving (for Preact frontend) ---
@@ -268,10 +332,12 @@ def bootstrap_settings():
 def serve_static(path):
     if path != "" and app.static_folder and os.path.exists(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
-    elif app.static_folder: # Check if static_folder is not None
+    elif app.static_folder and os.path.exists(os.path.join(app.static_folder, 'index.html')): # Check for index.html explicitly
         return send_from_directory(app.static_folder, 'index.html')
     else:
-        return "Static folder not configured", 500
+        # Consider a more specific error or a custom 404 page if index.html itself is missing
+        app.logger.error(f"Static file not found: {path}. Static folder: {app.static_folder}")
+        return jsonify(error="Resource not found or application not fully initialized."), 404
 
 
 if __name__ == '__main__':

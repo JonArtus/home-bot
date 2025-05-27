@@ -5,33 +5,81 @@ import { useState, useEffect } from 'preact/hooks';
 
 // --- Reusable Components ---
 
-// Moved RenderField to top level
-const RenderField = ({ label, id, children, helpText }) => (
-  <div class="field">
-    <label class="label" htmlFor={id}>{label}</label>
-    <div class="control">
-      {children}
+// Moved RenderField to top level - CORRECTED AND EXPANDED
+const RenderField = ({ id, label, type = "text", name, value, onChange, required = false, options, placeholder, readOnly = false, rows }) => {
+  if (type === "select") {
+    return (
+      <div className="field">
+        <label htmlFor={id} className="label has-text-light">{label}</label>
+        <div className="control">
+          <div className="select is-fullwidth">
+            <select id={id} name={name} value={value} onChange={onChange} required={required} readOnly={readOnly}>
+              {placeholder && <option value="">{placeholder}</option>}
+              {options && options.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+    );
+  } else if (type === "textarea") {
+    return (
+      <div className="field">
+        <label htmlFor={id} className="label has-text-light">{label}</label>
+        <div className="control">
+          <textarea
+            id={id}
+            name={name}
+            className="textarea"
+            value={value}
+            onChange={onChange}
+            required={required}
+            placeholder={placeholder}
+            readOnly={readOnly}
+            rows={rows || 3}
+          />
+        </div>
+      </div>
+    );
+  }
+  // Default to text input
+  return (
+    <div className="field">
+      <label htmlFor={id} className="label has-text-light">{label}</label>
+      <div className="control">
+        <input
+          id={id}
+          name={name}
+          className="input"
+          type={type}
+          value={value}
+          onChange={onChange}
+          required={required}
+          placeholder={placeholder}
+          readOnly={readOnly}
+        />
+      </div>
     </div>
-    {helpText && <p class="help">{helpText}</p>}
-  </div>
-);
+  );
+};
 
 // Modal Component (Bulma styled)
 function Modal({ isOpen, onClose, children, title, footer }) {
   if (!isOpen) return null;
   return (
-    <div class="modal is-active">
-      <div class="modal-background" onClick={onClose}></div>
-      <div class="modal-card">
-        <header class="modal-card-head">
-          <p class="modal-card-title">{title || 'Modal'}</p>
-          <button class="delete" aria-label="close" onClick={onClose}></button>
+    <div className={`modal ${isOpen ? 'is-active' : ''}`}>
+      <div className="modal-background" onClick={onClose}></div>
+      <div className="modal-card">
+        <header className="modal-card-head">
+          <p className="modal-card-title">{title || 'Modal'}</p>
+          <button className="delete" aria-label="close" onClick={onClose}></button>
         </header>
-        <section class="modal-card-body">
+        <section className="modal-card-body">
           {children}
         </section>
         {footer && (
-          <footer class="modal-card-foot">
+          <footer className="modal-card-foot">
             {footer}
           </footer>
         )}
@@ -41,156 +89,281 @@ function Modal({ isOpen, onClose, children, title, footer }) {
 }
 
 // TaskDefinitionForm (Bulma styled)
-function TaskDefinitionForm({ onTaskDefinitionAdded, closeModal }) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [notes, setNotes] = useState('');
-  const [category, setCategory] = useState('');
-  const [priority, setPriority] = useState('Medium');
+function TaskDefinitionForm({
+  isOpen,
+  onClose,
+  onSave,
+  initialTaskDefinition,
+  availableCategories
+}) {
+  const [taskDefinition, setTaskDefinition] = useState({});
   const [taskType, setTaskType] = useState('one-off');
-  const [dueDate, setDueDate] = useState('');
-  const [recurrenceRuleType, setRecurrenceRuleType] = useState('weekly');
-  const [weeklyDay, setWeeklyDay] = useState(1);
-  const [monthlyDay, setMonthlyDay] = useState(1);
   const [error, setError] = useState('');
+
+  const isEditing = !!initialTaskDefinition?.id;
+
+  useEffect(() => {
+    if (isOpen) { // Only reset/initialize when the modal becomes visible or initialTaskDefinition changes
+      const baseState = {
+        title: '',
+        description: '',
+        notes: '',
+        category_short_name: '',
+        priority: 'Medium',
+        due_date: '',
+        recurrence_rule: null, // { rule_type: '', weekly_recurring_day: '', monthly_recurring_day: '' }
+      };
+
+      if (isEditing) {
+        // When editing, populate form with existing data
+        setTaskDefinition({
+          ...baseState,
+          ...initialTaskDefinition,
+          // Ensure date is in YYYY-MM-DD for the input type='date'
+          due_date: initialTaskDefinition.due_date 
+            ? new Date(initialTaskDefinition.due_date).toISOString().split('T')[0] 
+            : '',
+          // Ensure recurrence_rule is an object, not null, if it exists, for easier access
+          recurrence_rule: initialTaskDefinition.recurrence_rule || null, 
+        });
+        if (initialTaskDefinition.recurrence_rule) {
+          setTaskType('recurring');
+        } else if (initialTaskDefinition.due_date) {
+          setTaskType('one-off');
+        } else {
+          setTaskType('one-off'); // Default if somehow neither (should not happen with good data)
+        }
+      } else {
+        // For new task, start with defaults
+        setTaskDefinition(baseState);
+        setTaskType('one-off');
+      }
+      setError(''); // Clear any previous errors when form opens/re-initializes
+    }
+  }, [isOpen, initialTaskDefinition, isEditing]);
+
+  // Effect to handle taskType changes
+  useEffect(() => {
+    if (!isOpen) return; // Only act when the form is open
+
+    setTaskDefinition(currentDef => {
+      let newDef = {...currentDef};
+      if (taskType === 'one-off') {
+        // If switching to one-off, clear recurrence_rule and potentially set a default due_date if desired
+        newDef.recurrence_rule = null;
+        // newDef.due_date = newDef.due_date || ''; // Keep existing due_date or set to empty
+      } else if (taskType === 'recurring') {
+        // If switching to recurring, clear due_date and initialize recurrence_rule if it's null
+        newDef.due_date = '';
+        newDef.recurrence_rule = newDef.recurrence_rule || { rule_type: 'weekly', weekly_recurring_day: '', monthly_recurring_day: '' };
+      }
+      return newDef;
+    });
+  }, [taskType, isOpen]); // Rerun when taskType or isOpen changes
+
+  const handleChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    const val = type === 'checkbox' ? checked : value;
+
+    if (name.startsWith('recurrence_rule.')) {
+      const field = name.split('.')[1];
+      setTaskDefinition(prev => ({
+        ...prev,
+        recurrence_rule: {
+          ...(prev.recurrence_rule || { rule_type: taskType === 'recurring' ? (prev.recurrence_rule?.rule_type || 'weekly') : '' }), // Initialize rule_type if not present
+          [field]: val
+        }
+      }));
+    } else {
+      setTaskDefinition(prev => ({ ...prev, [name]: val }));
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    if (!title.trim()) {
+    if (!taskDefinition.title?.trim()) { // Optional chaining for title check
       setError('Title is required.');
       return;
     }
 
-    let taskData = { title, description, notes, category, priority };
+    let payload = { ...taskDefinition };
 
+    // Clean up based on task type
     if (taskType === 'one-off') {
-      if (!dueDate) {
+      if (!payload.due_date) {
         setError('Due date is required for one-off tasks.');
         return;
       }
       try {
-        taskData.due_date = new Date(dueDate + "T00:00:00Z").toISOString();
+        // Ensure due_date is sent in ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
+        // The input type='date' gives YYYY-MM-DD. Append time and Z for UTC.
+        payload.due_date = new Date(payload.due_date + "T00:00:00.000Z").toISOString();
+        payload.recurrence_rule = null; // Clear recurrence if it was a recurring task being switched to one-off
       } catch (dateError) {
         setError('Invalid date format for Due Date.');
         return;
       }
-    } else {
-      let recurrence_rule = { rule_type: recurrenceRuleType };
-      if (recurrenceRuleType === 'weekly') {
-        if (!weeklyDay || weeklyDay < 1 || weeklyDay > 7) {
-          setError('Valid day (1-7) for weekly recurrence.');
-          return;
-        }
-        recurrence_rule.weekly_recurring_day = parseInt(weeklyDay, 10);
-      } else if (recurrenceRuleType === 'monthly') {
-        if (!monthlyDay || monthlyDay < 1 || monthlyDay > 31) {
-          setError('Valid day (1-31) for monthly recurrence.');
-          return;
-        }
-        recurrence_rule.monthly_recurring_day = parseInt(monthlyDay, 10);
+    } else { // recurring task
+      if (!payload.recurrence_rule?.rule_type) {
+        setError('Recurrence rule type is required for recurring tasks.');
+        return;
       }
-      taskData.recurrence_rule = recurrence_rule;
+      if (payload.recurrence_rule.rule_type === 'weekly' && !payload.recurrence_rule.weekly_recurring_day) {
+        setError('Weekly recurring day is required.');
+        return;
+      }
+      if (payload.recurrence_rule.rule_type === 'monthly' && !payload.recurrence_rule.monthly_recurring_day) {
+        setError('Monthly recurring day is required.');
+        return;
+      }
+       // Ensure rule days are integers if they exist
+      if (payload.recurrence_rule.weekly_recurring_day) {
+        payload.recurrence_rule.weekly_recurring_day = parseInt(payload.recurrence_rule.weekly_recurring_day, 10);
+      }
+      if (payload.recurrence_rule.monthly_recurring_day) {
+        payload.recurrence_rule.monthly_recurring_day = parseInt(payload.recurrence_rule.monthly_recurring_day, 10);
+      }
+      payload.due_date = null; // Clear due_date if it was a one-off task being switched to recurring
     }
 
-    try {
-      const response = await fetch('/api/task_definitions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(taskData)
-      });
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Failed to create task');
-      }
-      const newTaskDef = await response.json();
-      onTaskDefinitionAdded(newTaskDef);
-      setTitle('');
-      setDescription('');
-      setNotes('');
-      setCategory('');
-      setPriority('Medium');
-      setTaskType('one-off');
-      setDueDate('');
-      setRecurrenceRuleType('weekly');
-      setWeeklyDay(1);
-      setMonthlyDay(1);
-      closeModal();
-    } catch (err) {
-      console.error("Error creating task definition:", err);
-      setError(err.message || "Error creating task. Please try again.");
+    // If category is empty string, send null to backend (if backend expects null for no category)
+    if (payload.category_short_name === '') {
+        payload.category_short_name = null;
     }
+
+    onSave(payload, isEditing); // Pass payload and isEditing flag to onSave
   };
   
+  if (!isOpen) return null;
+
+  // Define form fields configuration
+  const formFields = [
+    { name: 'title', label: 'Title *', required: true },
+    { name: 'description', label: 'Short Description (Optional)' },
+    { name: 'notes', label: 'Detailed Notes (Optional)', type: 'textarea', rows: 3 },
+    {
+      name: 'priority',
+      label: 'Priority',
+      type: 'select',
+      options: [
+        { value: 'High', label: 'High' },
+        { value: 'Medium', label: 'Medium' },
+        { value: 'Low', label: 'Low' },
+      ],
+      required: true
+    },
+    { // Corrected category select field
+      name: 'category_short_name',
+      label: 'Category',
+      type: 'select',
+      placeholder: 'Select a category',
+      options: availableCategories.map(cat => ({
+        value: cat.short_name,
+        label: cat.icon ? `${cat.icon} ${cat.short_name}` : cat.short_name
+      })),
+      required: false
+    },
+  ];
+
   return (
     <form onSubmit={handleSubmit}>
-      {error && <div class="notification is-danger is-light">{error}</div>}
+      {error && <div className="notification is-danger is-light">{error}</div>}
       
-      <RenderField label="Title *" id="title">
-        <input type="text" id="title" value={title} onInput={e => setTitle(e.currentTarget.value)} required class="input" />
-      </RenderField>
-      <RenderField label="Short Description (Optional)" id="desc">
-        <input type="text" id="desc" value={description} onInput={e => setDescription(e.currentTarget.value)} class="input" />
-      </RenderField>
-      <RenderField label="Detailed Notes (Optional)" id="notes">
-        <textarea id="notes" value={notes} onInput={e => setNotes(e.currentTarget.value)} class="textarea" rows="3"></textarea>
-      </RenderField>
-      <RenderField label="Category" id="cat">
-        <input type="text" id="cat" value={category} onInput={e => setCategory(e.currentTarget.value)} class="input" />
-      </RenderField>
-      <RenderField label="Priority" id="prio">
-        <div class="select is-fullwidth">
-          <select id="prio" value={priority} onChange={e => setPriority(e.currentTarget.value)}>
-            <option value="Low">Low</option>
-            <option value="Medium">Medium</option>
-            <option value="High">High</option>
-            <option value="Urgent">Urgent</option>
-          </select>
-        </div>
-      </RenderField>
-      <RenderField label="Task Type" id="type">
-        <div class="select is-fullwidth">
-          <select id="type" value={taskType} onChange={e => setTaskType(e.currentTarget.value)}>
-            <option value="one-off">One-off</option>
-            <option value="recurring">Recurring</option>
-          </select>
-        </div>
-      </RenderField>
+      {formFields.map(field => (
+        <RenderField
+          key={field.name}
+          id={field.name}
+          label={field.label}
+          name={field.name}
+          type={field.type}
+          value={taskDefinition[field.name]}
+          onChange={handleChange}
+          required={field.required}
+          options={field.options}
+          placeholder={field.placeholder}
+          rows={field.rows} // for textarea
+        />
+      ))}
+
+      <RenderField
+        id="taskType"
+        label="Task Type"
+        name="taskType"
+        type="select"
+        value={taskType}
+        onChange={(e) => setTaskType(e.target.value)}
+        options={[
+          { value: 'one-off', label: 'One-off' },
+          { value: 'recurring', label: 'Recurring' },
+        ]}
+      />
 
       {taskType === 'one-off' && (
-        <RenderField label="Due Date *" id="dueD">
-          <input type="date" id="dueD" value={dueDate} onInput={e => setDueDate(e.currentTarget.value)} class="input" required />
-        </RenderField>
+        <RenderField
+          id="due_date"
+          label="Due Date *"
+          name="due_date"
+          type="date"
+          value={taskDefinition.due_date || ''}
+          onChange={handleChange}
+          required
+        />
       )}
+
       {taskType === 'recurring' && (
-        <div class="box" style={{border: '1px solid #ddd', marginTop: '1em', marginBottom: '1em'}}> {/* Simple box for grouping */}
-          <p class="title is-5">Recurrence Rule</p>
-          <RenderField label="Rule Type" id="recType">
-            <div class="select is-fullwidth">
-              <select id="recType" value={recurrenceRuleType} onChange={e => setRecurrenceRuleType(e.currentTarget.value)}>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
-            </div>
-          </RenderField>
-          {recurrenceRuleType === 'weekly' && (
-            <RenderField label="Day of Week (1=Mon, 7=Sun)" id="wDay">
-              <input type="number" id="wDay" min="1" max="7" value={weeklyDay} onInput={e => setWeeklyDay(parseInt(e.currentTarget.value, 10))} class="input" />
-            </RenderField>
+        <div className="box mt-4 p-4 has-background-grey-darker">
+          <p className="subtitle is-5 has-text-light">Recurrence Rule</p>
+          <RenderField
+            id="recurrence_rule.rule_type"
+            label="Rule Type"
+            name="recurrence_rule.rule_type"
+            type="select"
+            value={taskDefinition.recurrence_rule?.rule_type || ''}
+            onChange={handleChange}
+            options={[
+              { value: 'weekly', label: 'Weekly' },
+              { value: 'monthly', label: 'Monthly' },
+            ]}
+            required={taskType === 'recurring'}
+          />
+          {taskDefinition.recurrence_rule?.rule_type === 'weekly' && (
+            <RenderField
+              id="recurrence_rule.weekly_recurring_day"
+              label="Day of Week (1=Mon, 7=Sun)"
+              name="recurrence_rule.weekly_recurring_day"
+              type="number"
+              value={taskDefinition.recurrence_rule?.weekly_recurring_day || ''}
+              onChange={handleChange}
+              min="1"
+              max="7"
+              required
+            />
           )}
-          {recurrenceRuleType === 'monthly' && (
-            <RenderField label="Day of Month (1-31)" id="mDay">
-              <input type="number" id="mDay" min="1" max="31" value={monthlyDay} onInput={e => setMonthlyDay(parseInt(e.currentTarget.value, 10))} class="input" />
-            </RenderField>
+          {taskDefinition.recurrence_rule?.rule_type === 'monthly' && (
+            <RenderField
+              id="recurrence_rule.monthly_recurring_day"
+              label="Day of Month (1-31)"
+              name="recurrence_rule.monthly_recurring_day"
+              type="number"
+              value={taskDefinition.recurrence_rule?.monthly_recurring_day || ''}
+              onChange={handleChange}
+              min="1"
+              max="31"
+              required
+            />
           )}
         </div>
       )}
-      <div class="field is-grouped is-grouped-right" style={{marginTop: '1.5em'}}>
-        <div class="control">
-          <button type="button" class="button is-light" onClick={closeModal}>Cancel</button>
+
+      <div className="field is-grouped is-grouped-right mt-5">
+        <div className="control">
+          <button type="button" className="button is-light" onClick={onClose}>Cancel</button>
         </div>
-        <div class="control">
-          <button type="submit" class="button is-primary">Create Definition</button>
+        <div className="control">
+          <button type="submit" className="button is-primary">
+            {initialTaskDefinition ? 'Save Changes' : 'Create Definition'}
+          </button>
         </div>
       </div>
     </form>
@@ -199,93 +372,82 @@ function TaskDefinitionForm({ onTaskDefinitionAdded, closeModal }) {
 
 // Task Instance Item Component (Bulma styled)
 function TaskInstanceItem({ instance, onComplete, onShowDetails }) {
-  const { 
-    id, task_definition_title, due_date, 
-    task_definition_category, task_definition_priority, status 
-  } = instance;
+  const dueDate = new Date(instance.due_date);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Compare dates only
 
-  const isCompleted = status === 'Completed';
-  const dueDateObj = new Date(due_date);
-  const today = new Date(); today.setHours(0,0,0,0); // Normalize today to start of day
-  const dueDateNormalized = new Date(dueDateObj); dueDateNormalized.setHours(0,0,0,0); // Normalize due date
+  let dueDateString;
+  const diffTime = dueDate.getTime() - today.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-  let daysDiff = Math.ceil((dueDateNormalized - today) / (1000 * 60 * 60 * 24));
-  let dueDateDisplay;
-  let dueTagClass = "tag is-info is-light";
-
-  if (daysDiff < 0) {
-    dueDateDisplay = "Overdue";
-    dueTagClass = "tag is-danger";
-  } else if (daysDiff === 0) {
-    dueDateDisplay = "Today";
-    dueTagClass = "tag is-warning";
-  } else if (daysDiff === 1) {
-    dueDateDisplay = "1 day";
+  if (instance.status === 'Completed') {
+    dueDateString = <span className="has-text-grey-light">Completed</span>;
+  } else if (dueDate < today) {
+    dueDateString = <span className="has-text-danger-dark has-text-weight-bold">Overdue</span>;
+  } else if (dueDate.getTime() === today.getTime()) {
+    dueDateString = <span className="has-text-warning-dark has-text-weight-bold">Today</span>;
   } else {
-    dueDateDisplay = `${daysDiff} days`;
+    dueDateString = `${diffDays} day${diffDays === 1 ? '' : 's'}`;
   }
-  
-  let cardClasses = "box";
-  if (isCompleted) cardClasses += " has-background-grey-lighter"; // Softer completed background
-  else if (daysDiff < 0) cardClasses += " has-background-danger-light";
 
-  let priorityTagClass = "tag";
-  if (task_definition_priority === 'Urgent') priorityTagClass += " is-danger is-light";
-  else if (task_definition_priority === 'High') priorityTagClass += " is-warning is-light";
-  else if (task_definition_priority === 'Medium') priorityTagClass += " is-info is-light";
-  else priorityTagClass += " is-light";
-  
+  const categoryDisplay = instance.task_definition_category_details ?
+    `${instance.task_definition_category_details.icon || ''} ${instance.task_definition_category_details.short_name}`.trim() :
+    'N/A';
+
   return (
-    <div class={cardClasses} style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <div style={{flexGrow: 1}}>
-        <p class={`title is-5 ${isCompleted ? 'has-text-grey-light' : ''}`} style={isCompleted ? {textDecoration: 'line-through'} : {}}>
-          {task_definition_title}
-        </p>
-        <div class="tags are-small">
-          <span class={dueTagClass}>{dueDateDisplay}</span>
-          {task_definition_category && <span class="tag is-light">Cat: {task_definition_category}</span>}
-          {task_definition_priority && <span class={priorityTagClass}>Prio: {task_definition_priority}</span>}
-          <span class={`tag ${isCompleted ? 'is-success' : 'is-link is-light'}`}>{status}</span>
+    <div className="card mb-3" style={{ backgroundColor: '#3f0071', border: '1px solid #7b1fa2' }}>
+      <div className="card-content">
+        <div className="media">
+          <div className="media-content">
+            <p className="title is-5 has-text-light">{instance.task_definition_title}</p>
+            <p className="subtitle is-6 has-text-grey-lighter">
+              Due: {dueDateString} | Category: {categoryDisplay} | Priority: {instance.task_definition_priority || 'N/A'}
+            </p>
+          </div>
+          <div className="media-right">
+            <button 
+              onClick={() => onShowDetails(instance)} 
+              className="button is-info is-outlined"
+              title="Show Details"
+              style={{marginRight: '0.5rem'}}
+            >
+              <span>ℹ️</span>
+            </button>
+            {instance.status !== 'Completed' && (
+              <button 
+                onClick={() => onComplete(instance.id)} 
+                className="button is-success is-outlined"
+                title="Mark as Complete"
+              >
+                <span>✔️</span>
+              </button>
+            )}
+          </div>
         </div>
-      </div>
-      <div class="buttons are-small is-flex-shrink-0 ml-2">
-        <button 
-          onClick={() => onShowDetails(instance)} 
-          class="button is-info is-outlined"
-          title="Show Details"
-          style={{marginRight: '0.5rem'}}
-        >
-          <span>ℹ️</span>
-        </button>
-        {!isCompleted && (
-          <button 
-            onClick={() => onComplete(id)} 
-            class="button is-success is-outlined"
-            title="Mark as Complete"
-          >
-            <span>✔️</span>
-          </button>
-        )}
       </div>
     </div>
   );
 }
 
 // Task Definition Item (Bulma styled - for debugging list)
-function TaskDefinitionItem({ definition, onDelete }) {
-  const { id, title, description, category, priority, due_date, recurrence_rule } = definition;
+function TaskDefinitionItem({ definition, onDelete, onEdit }) {
+  const { id, title, description, category_short_name, priority, due_date, recurrence_rule, category } = definition;
   return (
-    <div class="box" style={{ marginBottom: '0.5rem', padding: '0.75rem' }}>
-      <div class="level">
-        <div class="level-left">
-          <div class="level-item">
+    <div className="box" style={{ marginBottom: '0.5rem', padding: '0.75rem' }}>
+      <div className="level">
+        <div className="level-left">
+          <div className="level-item">
             <div>
-              <p class="title is-6">{title}</p>
-              {description && <p class="subtitle is-7">{description}</p>}
-              <p class="is-size-7">ID: {id} | Cat: {category || 'N/A'} | Prio: {priority || 'N/A'}</p>
-              {due_date && <p class="is-size-7">One-off Due: {new Date(due_date).toLocaleDateString()}</p>}
+              <p className="title is-6">{title}</p>
+              {description && <p className="subtitle is-7">{description}</p>}
+              <p className="is-size-7">
+                ID: {id} | 
+                Cat: {category ? `${category.icon || ''} ${category.short_name}`.trim() : (category_short_name || 'N/A')} | 
+                Prio: {priority || 'N/A'}
+              </p>
+              {due_date && <p className="is-size-7">One-off Due: {new Date(due_date).toLocaleDateString()}</p>}
               {recurrence_rule && (
-                <p class="is-size-7">
+                <p className="is-size-7">
                   Recurring: {recurrence_rule.rule_type} 
                   {recurrence_rule.weekly_recurring_day && ` (Day: ${recurrence_rule.weekly_recurring_day})`}
                   {recurrence_rule.monthly_recurring_day && ` (Day: ${recurrence_rule.monthly_recurring_day})`}
@@ -294,9 +456,12 @@ function TaskDefinitionItem({ definition, onDelete }) {
             </div>
           </div>
         </div>
-        <div class="level-right">
-          <div class="level-item">
-            <button class="button is-danger is-outlined is-small" onClick={() => onDelete(id)}>
+        <div className="level-right">
+          <div className="level-item">
+            <button className="button is-info is-outlined is-small mr-2" onClick={onEdit}>
+              Edit
+            </button>
+            <button className="button is-danger is-outlined is-small" onClick={() => onDelete(id)}>
               Delete
             </button>
           </div>
@@ -307,31 +472,33 @@ function TaskDefinitionItem({ definition, onDelete }) {
 }
 
 // --- Task Instance Details Modal ---
-function TaskInstanceDetailsModal({ instance, isOpen, onClose }) {
+function TaskInstanceDetailsModal({ isOpen, onClose, instance }) {
   if (!isOpen || !instance) return null;
 
-  const { 
-    task_definition_title, task_definition_description, task_definition_notes,
-    task_definition_category, task_definition_priority, due_date, status, completion_date
-  } = instance;
-
-  const DetailItem = ({ label, value }) => value ? (
-    <p><strong>{label}:</strong> {typeof value === 'string' && value.includes('\n') ? <span style={{whiteSpace: 'pre-wrap'}}>{value}</span> : value}</p>
-  ) : null;
+  const categoryDisplay = instance.task_definition_category_details ?
+    `${instance.task_definition_category_details.icon || ''} ${instance.task_definition_category_details.short_name}`.trim() :
+    'N/A';
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Details: ${task_definition_title}`}>
-      <div class="content">
-        {task_definition_description && <p class="subtitle is-6">{task_definition_description}</p>}
-        <DetailItem label="Notes" value={task_definition_notes} />
-        <hr style={{margin: '1rem 0'}}/>
-        <DetailItem label="Category" value={task_definition_category} />
-        <DetailItem label="Priority" value={task_definition_priority} />
-        <DetailItem label="Due Date" value={new Date(due_date).toLocaleString()} />
-        <DetailItem label="Status" value={status} />
-        {completion_date && <DetailItem label="Completed On" value={new Date(completion_date).toLocaleString()} />}
+    <div className="modal is-active">
+      <div className="modal-background" onClick={onClose}></div>
+      <div className="modal-card">
+        <header className="modal-card-head">
+          <p className="modal-card-title">Details: {instance.task_definition_title}</p>
+          <button className="delete" aria-label="close" onClick={onClose}></button>
+        </header>
+        <section className="modal-card-body has-background-dark has-text-light">
+          <p><strong>Title:</strong> {instance.task_definition_title}</p>
+          <p><strong>Description:</strong> {instance.task_definition_description || 'N/A'}</p>
+          <p><strong>Notes:</strong> {instance.task_definition_notes || 'N/A'}</p>
+          <p><strong>Category:</strong> {categoryDisplay}</p>
+          <p><strong>Priority:</strong> {instance.task_definition_priority || 'N/A'}</p>
+          <p><strong>Due Date:</strong> {new Date(instance.due_date).toLocaleString()}</p>
+          <p><strong>Status:</strong> {instance.status}</p>
+          {instance.completion_date && <p><strong>Completed On:</strong> {new Date(instance.completion_date).toLocaleString()}</p>}
+        </section>
       </div>
-    </Modal>
+    </div>
   );
 }
 
@@ -381,24 +548,24 @@ function SettingsPage() {
     }
   };
 
-  if (isLoading) return <div class="notification is-info is-light">Loading settings... <progress class="progress is-small is-info" max="100"></progress></div>;
-  if (error && !isLoading) return <div class="notification is-danger">Error: {error}</div>;
+  if (isLoading) return <div className="notification is-info is-light">Loading settings... <progress className="progress is-small is-info" max="100"></progress></div>;
+  if (error && !isLoading) return <div className="notification is-danger">Error: {error}</div>;
 
   const RenderSettingField = ({ label, id, value, onChange, helpText }) => (
-    <div class="field">
-      <label class="label" htmlFor={id}>{label}</label>
-      <div class="control">
-        <input class="input" type="number" id={id} value={value} onChange={e => onChange(id, e.currentTarget.value)} />
+    <div className="field">
+      <label className="label" htmlFor={id}>{label}</label>
+      <div className="control">
+        <input className="input" type="number" id={id} value={value} onChange={e => onChange(id, e.currentTarget.value)} />
       </div>
-      {helpText && <p class="help">{helpText}</p>}
+      {helpText && <p className="help">{helpText}</p>}
     </div>
   );
 
   return (
-    <section class="section">
-      <h2 class="title is-3">Application Settings</h2>
-      {successMessage && <div class="notification is-success is-light">{successMessage}</div>}
-      {error && <div class="notification is-danger is-light">{error}</div>} {/* Re-display error if save fails */}
+    <section className="section">
+      <h2 className="title is-3">Application Settings</h2>
+      {successMessage && <div className="notification is-success is-light">{successMessage}</div>}
+      {error && <div className="notification is-danger is-light">{error}</div>} {/* Re-display error if save fails */}
       
       <RenderSettingField 
         label="Max Future Task Instances to Generate"
@@ -414,63 +581,253 @@ function SettingsPage() {
         onChange={handleChange}
         helpText="How many months ahead to generate instances (e.g., 13)."
       />
-      <div class="field is-grouped is-grouped-right" style={{marginTop: '1.5em'}}>
-        <div class="control">
-          <button class="button is-primary" onClick={handleSave}>Save Settings</button>
+      <div className="field is-grouped is-grouped-right" style={{marginTop: '1.5em'}}>
+        <div className="control">
+          <button className="button is-primary" onClick={handleSave}>Save Settings</button>
         </div>
       </div>
     </section>
   );
 }
 
-// --- Main App Component with Navbar and Page State ---
-export function App() {
-  const [taskInstances, setTaskInstances] = useState([]);
-  const [taskDefinitions, setTaskDefinitions] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+// --- Category Management Page ---
+const CategoryManagementPage = ({ categories, onUpdateCategories }) => {
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryIcon, setNewCategoryIcon] = useState('');
+  const [editingCategory, setEditingCategory] = useState(null); // { short_name: string, icon: string }
   const [error, setError] = useState(null);
-  const [isTaskDefModalOpen, setIsTaskDefModalOpen] = useState(false);
-  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
-  const [selectedInstanceForDetails, setSelectedInstanceForDetails] = useState(null);
-  const [isNavbarActive, setIsNavbarActive] = useState(false);
-  const [currentPage, setCurrentPage] = useState('home');
 
-  const fetchData = () => {
-    setIsLoading(true);
+  const handleAddCategory = async () => {
     setError(null);
-    Promise.all([
-      fetch('/api/task_instances').then(res => {
-        if (!res.ok) return res.json().then(err => Promise.reject(err));
-        return res.json();
-      }),
-      fetch('/api/task_definitions').then(res => {
-        if (!res.ok) return res.json().then(err => Promise.reject(err));
-        return res.json();
-      })
-    ])
-    .then(([instances, definitions]) => {
-      setTaskInstances(instances.sort((a, b) => new Date(a.due_date) - new Date(b.due_date)));
-      setTaskDefinitions(definitions);
-    })
-    .catch(err => {
-      console.error("Error fetching data:", err);
-      setError(err.error || err.message || "Failed to load data. Check API server.");
-      setTaskInstances([]); // Clear data on error
-      setTaskDefinitions([]);
-    })
-    .finally(() => {
-      setIsLoading(false);
-    });
+    if (!newCategoryName.trim()) {
+      setError('Category name cannot be empty.');
+      return;
+    }
+    try {
+      const response = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ short_name: newCategoryName, icon: newCategoryIcon }),
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || `Failed to add category (${response.status})`);
+      }
+      setNewCategoryName('');
+      setNewCategoryIcon('');
+      onUpdateCategories(); // Refresh categories list in App
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
-  useEffect(fetchData, []);
-  useEffect(() => {
-    setIsNavbarActive(false);
-  }, [currentPage]);
+  const handleEditCategory = (category) => {
+    setEditingCategory({ ...category }); // Set for editing
+  };
 
-  const handleTaskDefinitionAdded = () => {
+  const handleSaveEdit = async () => {
+    if (!editingCategory || !editingCategory.short_name) return;
+    setError(null);
+    try {
+      const response = await fetch(`/api/categories/${editingCategory.short_name}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ icon: editingCategory.icon }), // Only icon is editable for now
+        }
+      );
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || `Failed to update category (${response.status})`);
+      }
+      setEditingCategory(null);
+      onUpdateCategories();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteCategory = async (short_name) => {
+    if (!confirm(`Are you sure you want to delete category "${short_name}"? This cannot be undone.`)) {
+        return;
+    }
+    setError(null);
+    try {
+        const response = await fetch(`/api/categories/${short_name}`, { method: 'DELETE' });
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.error || `Failed to delete category (${response.status})`);
+        }
+        onUpdateCategories();
+    } catch (err) {
+        setError(err.message);
+    }
+  };
+
+
+  return (
+    <section className="section">
+      <h2 className="title is-3 has-text-light">Manage Categories</h2>
+      {error && <div className="notification is-danger is-light">{error}</div>}
+
+      {/* Add New Category Form */}
+      <div className="box has-background-grey-darker p-5 mb-5">
+        <h3 className="title is-4 has-text-light">Add New Category</h3>
+        <RenderField 
+            id="newCategoryName" 
+            name="newCategoryName"
+            type="text"
+            label="Category Name (Short Name)" 
+            value={newCategoryName} 
+            onChange={(e) => setNewCategoryName(e.target.value)} 
+            placeholder="e.g., Work, Personal, Hobby"
+            required
+        />
+        <RenderField 
+            id="newCategoryIcon" 
+            name="newCategoryIcon"
+            type="text"
+            label="Icon (Optional Emoji or Class)" 
+            value={newCategoryIcon} 
+            onChange={(e) => setNewCategoryIcon(e.target.value)} 
+            placeholder="e.g., 💼 or fas fa-briefcase"
+        />
+        <button className="button is-primary mt-3" onClick={handleAddCategory}>Add Category</button>
+      </div>
+
+      {/* Edit Category Modal (Simplified) */}
+      {editingCategory && (
+        <div className="modal is-active">
+          <div className="modal-background" onClick={() => setEditingCategory(null)}></div>
+          <div className="modal-card">
+            <header className="modal-card-head has-background-dark">
+              <p className="modal-card-title has-text-light">Edit Category: {editingCategory.short_name}</p>
+              <button className="delete" aria-label="close" onClick={() => setEditingCategory(null)}></button>
+            </header>
+            <section className="modal-card-body has-background-dark">
+              <RenderField 
+                id="editingCategoryIcon" 
+                name="editingCategoryIcon"
+                type="text"
+                label="Icon"
+                value={editingCategory.icon || ''}
+                onChange={(e) => setEditingCategory({...editingCategory, icon: e.target.value})}
+              />
+            </section>
+            <footer className="modal-card-foot has-background-dark">
+              <button className="button is-success" onClick={handleSaveEdit}>Save changes</button>
+              <button className="button" onClick={() => setEditingCategory(null)}>Cancel</button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {/* List Existing Categories */}
+      <div className="box has-background-grey-darker p-5">
+        <h3 className="title is-4 has-text-light">Existing Categories</h3>
+        {categories.length === 0 ? (
+          <p className="has-text-grey-lighter">No categories defined yet.</p>
+        ) : (
+          <table className="table is-fullwidth is-hoverable has-background-grey-dark has-text-light">
+            <thead>
+              <tr>
+                <th className="has-text-light">Icon</th>
+                <th className="has-text-light">Name (Short Name)</th>
+                <th className="has-text-light">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {categories.map(cat => (
+                <tr key={cat.short_name}>
+                  <td>{cat.icon}</td>
+                  <td>{cat.short_name}</td>
+                  <td>
+                    <button className="button is-info is-small mr-2" onClick={() => handleEditCategory(cat)}>Edit Icon</button>
+                    <button className="button is-danger is-small" onClick={() => handleDeleteCategory(cat.short_name)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
+  );
+};
+
+// --- Main App Component with Navbar and Page State ---
+export function App() {
+  const [taskDefinitions, setTaskDefinitions] = useState([]);
+  const [taskInstances, setTaskInstances] = useState([]);
+  const [settings, setSettings] = useState({});
+  const [categories, setCategories] = useState([]); // State for categories
+
+  const [isTaskFormOpen, setIsTaskFormOpen] = useState(false);
+  const [editingTaskDefinition, setEditingTaskDefinition] = useState(null);
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [selectedInstanceForDetails, setSelectedInstanceForDetails] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const [currentPage, setCurrentPage] = useState('home'); // 'home', 'settings', 'categories'
+  const [isNavbarActive, setIsNavbarActive] = useState(false);
+
+  const fetchData = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [defsResponse, instancesResponse, settingsResponse, categoriesResponse] = await Promise.all([
+        fetch('/api/task_definitions'),
+        fetch('/api/task_instances'),
+        fetch('/api/settings'),
+        fetch('/api/categories') // Fetch categories
+      ]);
+
+      if (!defsResponse.ok) throw new Error(`Task Definitions: ${defsResponse.statusText} (${defsResponse.status})`);
+      if (!instancesResponse.ok) throw new Error(`Task Instances: ${instancesResponse.statusText} (${instancesResponse.status})`);
+      if (!settingsResponse.ok) throw new Error(`Settings: ${settingsResponse.statusText} (${settingsResponse.status})`);
+      if (!categoriesResponse.ok) throw new Error(`Categories: ${categoriesResponse.statusText} (${categoriesResponse.status})`); // Check categoriesResponse
+
+      const defsData = await defsResponse.json();
+      const instancesData = await instancesResponse.json();
+      const settingsData = await settingsResponse.json();
+      const categoriesData = await categoriesResponse.json(); // Parse categories JSON
+
+      setTaskDefinitions(defsData);
+      setTaskInstances(instancesData.sort((a, b) => new Date(a.due_date) - new Date(b.due_date)));
+      setSettings(settingsData);
+      setCategories(categoriesData); // Set categories state
+
+    } catch (error) {
+      console.error("Failed to fetch data:", error);
+      setError(error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData(); // Initial fetch
+  }, []); // Runs once on mount
+
+  // Handler to refresh categories, passed to CategoryManagementPage
+  const refreshCategories = () => {
+    fetch('/api/categories')
+      .then(res => {
+        if (!res.ok) throw new Error(`Categories: ${res.statusText} (${res.status})`);
+        return res.json();
+      })
+      .then(setCategories)
+      .catch(err => {
+        console.error("Failed to refresh categories:", err);
+        // Optionally set an error state here for categories specifically
+      });
+  };
+
+  const handleSaveTaskDefinition = (newTaskDef) => {
     fetchData();
-    setIsTaskDefModalOpen(false);
+    setIsTaskFormOpen(false);
+    setEditingTaskDefinition(null);
   };
 
   const handleCompleteTaskInstance = async (instanceId) => {
@@ -513,27 +870,29 @@ export function App() {
     switch (currentPage) {
       case 'settings':
         return <SettingsPage />;
+      case 'categories':
+        return <CategoryManagementPage categories={categories} onUpdateCategories={refreshCategories} />;
       case 'home':
       default:
         return (
           <>
-            <div class="level mb-5">
-              <div class="level-left">
-                <div class="level-item">
-                  <h2 class="title is-3 has-text-light">Due Soon</h2>
+            <div className="level mb-5">
+              <div className="level-left">
+                <div className="level-item">
+                  <h2 className="title is-3 has-text-light">Due Soon</h2>
                 </div>
               </div>
             </div>
             
-            {error && <div class="notification is-danger">{error}</div>}
-            {isLoading && <div class="notification is-info is-light">Loading tasks... <progress class="progress is-small is-info" max="100"></progress></div>}
+            {error && <div className="notification is-danger">{error}</div>}
+            {isLoading && <div className="notification is-info is-light">Loading tasks... <progress className="progress is-small is-info" max="100"></progress></div>}
 
             {!isLoading && taskInstances.length === 0 && (
-              <div class="notification is-warning">No task instances found. Try adding a task definition!</div>
+              <div className="notification is-warning">No task instances found. Try adding a task definition!</div>
             )}
             
             {!isLoading && taskInstances.length > 0 && (
-              <div class="mb-6">
+              <div className="mb-6">
                 {taskInstances.map(instance => (
                   <TaskInstanceItem key={instance.id} instance={instance} onComplete={handleCompleteTaskInstance} onShowDetails={handleShowDetails} />
                 ))}
@@ -541,14 +900,14 @@ export function App() {
             )}
 
             <hr style={{backgroundColor: '#444'}}/>
-            <div class="mt-6">
-              <h3 class="title is-4 has-text-grey-lighter">Task Definitions (Debug/Management)</h3>
-              {isLoading && <p class="has-text-grey-lighter">Loading definitions...</p>}
+            <div className="mt-6">
+              <h3 className="title is-4 has-text-grey-lighter">Task Definitions (Debug/Management)</h3>
+              {isLoading && <p className="has-text-grey-lighter">Loading definitions...</p>}
               {!isLoading && taskDefinitions.length === 0 && (
-                <p class="has-text-grey-lighter">No task definitions yet.</p>
+                <p className="has-text-grey-lighter">No task definitions yet.</p>
               )}
               {!isLoading && taskDefinitions.length > 0 && (
-                <div class="is-flex is-flex-direction-column">
+                <div className="is-flex is-flex-direction-column">
                   {taskDefinitions.map(def => (
                     <TaskDefinitionItem key={def.id} definition={def} onDelete={handleDeleteTaskDefinition} />
                   ))}
@@ -562,31 +921,34 @@ export function App() {
 
   return (
     <div style={{fontFamily: "'Rajdhani', sans-serif"}}>
-      <nav class="navbar navbar-neon-purple" role="navigation" aria-label="main navigation">
-        <div class="navbar-brand">
-          <a class="navbar-item" href="#" onClick={() => setCurrentPage('home')} style={{fontSize: '1.5rem'}}>
+      <nav className="navbar navbar-neon-purple" role="navigation" aria-label="main navigation">
+        <div className="navbar-brand">
+          <a className="navbar-item" href="#" onClick={() => { setCurrentPage('home'); setIsNavbarActive(false); }} style={{fontSize: '1.5rem'}}>
             <span role="img" aria-label="robot icon" style={{marginRight: '0.5em'}}>🤖</span> Home Bot
           </a>
-          <a role="button" class={`navbar-burger burger ${isNavbarActive ? 'is-active' : ''}`} 
+          <a role="button" className={`navbar-burger burger ${isNavbarActive ? 'is-active' : ''}`} 
              aria-label="menu" aria-expanded={isNavbarActive} onClick={() => setIsNavbarActive(!isNavbarActive)}>
             <span aria-hidden="true"></span>
             <span aria-hidden="true"></span>
             <span aria-hidden="true"></span>
           </a>
         </div>
-        <div class={`navbar-menu ${isNavbarActive ? 'is-active' : ''}`}>
-          <div class="navbar-start">
-            <a class="navbar-item" href="#" onClick={() => setCurrentPage('home')}>
+        <div className={`navbar-menu ${isNavbarActive ? 'is-active' : ''}`}>
+          <div className="navbar-start">
+            <a className="navbar-item" href="#" onClick={() => { setCurrentPage('home'); setIsNavbarActive(false); }}>
               Home
             </a>
-            <a class="navbar-item" href="#" onClick={() => setCurrentPage('settings')}>
+            <a className="navbar-item" href="#" onClick={() => { setCurrentPage('settings'); setIsNavbarActive(false); }}>
               Settings
             </a>
+            <a className="navbar-item" href="#" onClick={() => { setCurrentPage('categories'); setIsNavbarActive(false); }}>
+              Manage Categories
+            </a>
           </div>
-          <div class="navbar-end">
-            <div class="navbar-item">
-              <div class="buttons">
-                <button class="button is-light" onClick={() => setIsTaskDefModalOpen(true)}>
+          <div className="navbar-end">
+            <div className="navbar-item">
+              <div className="buttons">
+                <button className="button is-light" onClick={() => { setEditingTaskDefinition(null); setIsTaskFormOpen(true); setIsNavbarActive(false); }}>
                   <strong>New</strong>
                 </button>
               </div>
@@ -595,16 +957,27 @@ export function App() {
         </div>
       </nav>
 
-      <section class="section">
-        <div class="container">
+      <section className="section">
+        <div className="container">
           {renderPage()}
         </div>
       </section>
 
-      <Modal isOpen={isTaskDefModalOpen} onClose={() => setIsTaskDefModalOpen(false)} title="Add New Task Definition">
-        <TaskDefinitionForm onTaskDefinitionAdded={handleTaskDefinitionAdded} closeModal={() => setIsTaskDefModalOpen(false)} />
+      <Modal isOpen={isTaskFormOpen} onClose={() => setIsTaskFormOpen(false)} title={editingTaskDefinition ? "Edit Task Definition" : "Add New Task Definition"}>
+        <TaskDefinitionForm
+          isOpen={isTaskFormOpen}
+          onClose={() => setIsTaskFormOpen(false)}
+          onSave={handleSaveTaskDefinition}
+          initialTaskDefinition={editingTaskDefinition}
+          key={editingTaskDefinition ? editingTaskDefinition.id : 'new'}
+          availableCategories={categories} // Pass categories to the form
+        />
       </Modal>
-      <TaskInstanceDetailsModal instance={selectedInstanceForDetails} isOpen={isDetailsModalOpen} onClose={() => setIsDetailsModalOpen(false)} />
+      <TaskInstanceDetailsModal
+        isOpen={isDetailsModalOpen}
+        onClose={() => setIsDetailsModalOpen(false)}
+        instance={selectedInstanceForDetails}
+      />
     </div>
   );
 } 
