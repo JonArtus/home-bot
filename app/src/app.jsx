@@ -104,14 +104,18 @@ function TaskDefinitionForm({
 
   useEffect(() => {
     if (isOpen) { // Only reset/initialize when the modal becomes visible or initialTaskDefinition changes
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowISO = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD format
+
       const baseState = {
         title: '',
         description: '',
         notes: '',
-        category_short_name: '',
+        category_short_name: 'Default',
         priority: 'Medium',
-        due_date: '',
-        recurrence_rule: null, // { rule_type: '', weekly_recurring_day: '', monthly_recurring_day: '' }
+        due_date: tomorrowISO, // <<< CHANGED: Default to tomorrow for new tasks
+        recurrence_rule: null, 
       };
 
       if (isEditing) {
@@ -134,7 +138,7 @@ function TaskDefinitionForm({
           setTaskType('one-off'); // Default if somehow neither (should not happen with good data)
         }
       } else {
-        // For new task, start with defaults
+        // For new task, start with defaults (category will be 'Default')
         setTaskDefinition(baseState);
         setTaskType('one-off');
       }
@@ -182,57 +186,63 @@ function TaskDefinitionForm({
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    if (!taskDefinition.title?.trim()) { // Optional chaining for title check
+    console.log("[TaskDefinitionForm] handleSubmit triggered. isEditing:", isEditing);
+    console.log("[TaskDefinitionForm] Current form state:", taskDefinition);
+    console.log("[TaskDefinitionForm] Current taskType:", taskType);
+
+    if (!taskDefinition.title?.trim()) {
       setError('Title is required.');
+      console.error("[TaskDefinitionForm] Title is missing.");
       return;
     }
 
     let payload = { ...taskDefinition };
 
-    // Clean up based on task type
     if (taskType === 'one-off') {
       if (!payload.due_date) {
         setError('Due date is required for one-off tasks.');
+        console.error("[TaskDefinitionForm] Due date is missing for one-off task.");
         return;
       }
       try {
-        // Ensure due_date is sent in ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
-        // The input type='date' gives YYYY-MM-DD. Append time and Z for UTC.
         payload.due_date = new Date(payload.due_date + "T00:00:00.000Z").toISOString();
-        payload.recurrence_rule = null; // Clear recurrence if it was a recurring task being switched to one-off
+        payload.recurrence_rule = null; 
       } catch (dateError) {
         setError('Invalid date format for Due Date.');
+        console.error("[TaskDefinitionForm] Invalid due date format:", payload.due_date, dateError);
         return;
       }
-    } else { // recurring task
+    } else { 
       if (!payload.recurrence_rule?.rule_type) {
         setError('Recurrence rule type is required for recurring tasks.');
+        console.error("[TaskDefinitionForm] Recurrence rule type missing.");
         return;
       }
       if (payload.recurrence_rule.rule_type === 'weekly' && !payload.recurrence_rule.weekly_recurring_day) {
         setError('Weekly recurring day is required.');
+        console.error("[TaskDefinitionForm] Weekly recurring day missing.");
         return;
       }
       if (payload.recurrence_rule.rule_type === 'monthly' && !payload.recurrence_rule.monthly_recurring_day) {
         setError('Monthly recurring day is required.');
+        console.error("[TaskDefinitionForm] Monthly recurring day missing.");
         return;
       }
-       // Ensure rule days are integers if they exist
       if (payload.recurrence_rule.weekly_recurring_day) {
         payload.recurrence_rule.weekly_recurring_day = parseInt(payload.recurrence_rule.weekly_recurring_day, 10);
       }
       if (payload.recurrence_rule.monthly_recurring_day) {
         payload.recurrence_rule.monthly_recurring_day = parseInt(payload.recurrence_rule.monthly_recurring_day, 10);
       }
-      payload.due_date = null; // Clear due_date if it was a one-off task being switched to recurring
+      payload.due_date = null; 
     }
 
-    // If category is empty string, send null to backend (if backend expects null for no category)
     if (payload.category_short_name === '') {
         payload.category_short_name = null;
     }
-
-    onSave(payload, isEditing); // Pass payload and isEditing flag to onSave
+    
+    console.log("[TaskDefinitionForm] Prepared payload:", payload);
+    onSave(payload, isEditing); 
   };
   
   if (!isOpen) return null;
@@ -824,10 +834,59 @@ export function App() {
       });
   };
 
-  const handleSaveTaskDefinition = (newTaskDef) => {
-    fetchData();
-    setIsTaskFormOpen(false);
-    setEditingTaskDefinition(null);
+  const handleSaveTaskDefinition = async (taskDefPayload, isEditing) => {
+    setError(null); // Clear general app error
+    console.log("[App] handleSaveTaskDefinition triggered. isEditing:", isEditing);
+    console.log("[App] Payload received:", taskDefPayload);
+
+    const url = isEditing ? `/api/task_definitions/${taskDefPayload.id}` : '/api/task_definitions';
+    const method = isEditing ? 'PUT' : 'POST';
+
+    console.log(`[App] Sending ${method} request to ${url}`);
+
+    try {
+      const response = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(taskDefPayload)
+      });
+
+      const resultText = await response.text(); // Get response text first for debugging
+      console.log("[App] Raw response from server:", resultText);
+
+      if (!response.ok) {
+        let errorMsg = `Failed to ${isEditing ? 'update' : 'create'} task definition (${response.status})`;
+        try {
+          const errData = JSON.parse(resultText); // Try to parse error json
+          errorMsg = errData.error || errorMsg;
+        } catch (e) {
+          // Not a JSON error response, use status text or raw text
+          errorMsg = response.statusText || errorMsg;
+          if (resultText) errorMsg += ` - ${resultText}`;
+        }
+        throw new Error(errorMsg);
+      }
+
+      // If response.ok is true, assume success. 
+      // The backend returns the created/updated task definition directly.
+      // We can parse it if needed, but for now, just log and proceed.
+      try {
+        const resultJson = JSON.parse(resultText);
+        console.log("[App] Parsed successful JSON response:", resultJson);
+        // No specific check like result.success is needed here if HTTP status is ok (200, 201)
+      } catch (e) {
+        console.warn("[App] Could not parse successful response as JSON, but proceeding as HTTP status was OK:", resultText, e);
+        // This might happen if the backend sends an empty success response for example
+      }
+      
+      console.log("[App] Task definition saved successfully (based on HTTP status).");
+      fetchData();
+      setIsTaskFormOpen(false);
+      setEditingTaskDefinition(null);
+    } catch (err) {
+      console.error("[App] Error saving task definition:", err);
+      setError(err.message || 'Error saving task definition.');
+    }
   };
 
   const handleCompleteTaskInstance = async (instanceId) => {
