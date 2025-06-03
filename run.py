@@ -1,5 +1,5 @@
 from app_init import create_app, db # Import from app_init.py in root
-from models.models import TaskDefinition, TaskInstance, RecurrenceRule, Setting, Category # Import RecurrenceRule, Setting, and Category
+from models.models import TaskDefinition, TaskInstance, RecurrenceRule, Setting, Category, Asset # Import Asset
 from services import generate_task_instances, DEFAULT_MAX_INSTANCES_TO_GENERATE, DEFAULT_MAX_ADVANCE_GENERATION_MONTHS # Import the service and defaults
 from flask import jsonify, request, send_from_directory # Keep send_from_directory
 import os
@@ -50,17 +50,85 @@ def update_category(short_name):
 
 @app.route('/api/categories/<string:short_name>', methods=['DELETE'])
 def delete_category(short_name):
+    if short_name in ['Default', 'Maintenance']:
+        return jsonify({'error': f'Category "{short_name}" is protected and cannot be deleted.'}), 403 # Forbidden
+
     category = db.session.get(Category, short_name)
     if not category:
         return jsonify({'error': 'Category not found'}), 404
     
-    # Check if category is in use by any TaskDefinition
     if category.task_definitions:
         return jsonify({'error': 'Category is in use and cannot be deleted. Please reassign tasks first.'}), 400
 
     db.session.delete(category)
     db.session.commit()
     return jsonify({'message': 'Category deleted'}), 200
+
+# --- Asset API Endpoints ---
+@app.route('/api/assets', methods=['POST'])
+def create_asset():
+    data = request.get_json() or {}
+    if not data.get('name'):
+        return jsonify({'error': 'Asset name is required'}), 400
+    
+    asset = Asset(name=data['name'], description=data.get('description'))
+    db.session.add(asset)
+    db.session.commit()
+    return jsonify(asset.to_dict()), 201
+
+@app.route('/api/assets', methods=['GET'])
+def get_assets():
+    assets = Asset.query.order_by(Asset.name).all()
+    return jsonify([asset.to_dict() for asset in assets])
+
+@app.route('/api/assets/<int:id>', methods=['GET'])
+def get_asset(id):
+    asset = db.session.get(Asset, id)
+    if asset is None:
+        return jsonify({'error': 'Asset not found'}), 404
+    return jsonify(asset.to_dict())
+
+@app.route('/api/assets/<int:id>', methods=['PUT'])
+def update_asset(id):
+    asset = db.session.get(Asset, id)
+    if asset is None:
+        return jsonify({'error': 'Asset not found'}), 404
+    data = request.get_json() or {}
+    if 'name' in data and not data['name']:
+        return jsonify({'error': 'Asset name cannot be empty'}), 400
+
+    asset.name = data.get('name', asset.name)
+    asset.description = data.get('description', asset.description)
+    # Add other updatable fields for Asset here if necessary
+    db.session.commit()
+    return jsonify(asset.to_dict())
+
+@app.route('/api/assets/<int:id>', methods=['DELETE'])
+def delete_asset(id):
+    asset = db.session.get(Asset, id)
+    if asset is None:
+        return jsonify({'error': 'Asset not found'}), 404
+    
+    # Check if asset is linked to any task definitions
+    if asset.task_definitions.first(): # Using lazy='dynamic' allows .first()
+        return jsonify({'error': 'Asset is linked to task definitions and cannot be deleted. Please remove links first.'}), 400
+
+    db.session.delete(asset)
+    db.session.commit()
+    return jsonify({'message': 'Asset deleted'}), 200
+
+@app.route('/api/assets/<int:asset_id>/completed_task_instances', methods=['GET'])
+def get_completed_task_instances_for_asset(asset_id):
+    asset = db.session.get(Asset, asset_id)
+    if not asset:
+        return jsonify({'error': 'Asset not found'}), 404
+
+    completed_instances = TaskInstance.query.join(TaskDefinition).filter(
+        TaskDefinition.asset_id == asset_id,
+        TaskInstance.status == 'Completed'
+    ).order_by(TaskInstance.completion_date.desc()).all()
+    
+    return jsonify([instance.to_dict() for instance in completed_instances])
 
 # --- TaskDefinition CRUD API Endpoints ---
 
@@ -76,6 +144,12 @@ def create_task_definition():
         if not category_obj:
             return jsonify({'error': f'Category "{category_short_name}" not found.'}), 400
     
+    asset_id = data.get('asset_id')
+    if asset_id:
+        asset_obj = db.session.get(Asset, asset_id)
+        if not asset_obj:
+            return jsonify({'error': f'Asset "{asset_id}" not found.'}), 400
+
     due_date_str = data.get('due_date')
     recurrence_data = data.get('recurrence_rule')
     if due_date_str and recurrence_data:
@@ -93,7 +167,8 @@ def create_task_definition():
         notes=data.get('notes'),
         category_short_name=category_short_name,
         priority=data.get('priority'),
-        due_date=due_date_obj
+        due_date=due_date_obj,
+        asset_id=asset_id
     )
     db.session.add(task_def)
     # db.session.flush() # Flush to get task_def.id before creating rule/instance
@@ -157,6 +232,17 @@ def update_task_definition(id):
             task_def.category_short_name = None
             task_def.defined_category = None # Ensure relationship is updated
             
+    if 'asset_id' in data:
+        new_asset_id = data['asset_id']
+        if new_asset_id:
+            asset_obj = db.session.get(Asset, new_asset_id)
+            if not asset_obj:
+                return jsonify({'error': f'Asset "{new_asset_id}" not found.'}), 400
+            task_def.asset_id = new_asset_id
+            # task_def.asset = asset_obj # Relationship will be updated by FK assignment
+        else: # explicitly setting asset_id to null
+            task_def.asset_id = None
+
     due_date_str = data.get('due_date')
     recurrence_data = data.get('recurrence_rule')
 
@@ -321,9 +407,14 @@ def bootstrap_settings():
         if not setting:
             new_setting = Setting(key=key, value=value_str)
             db.session.add(new_setting)
+    
     # Bootstrap Default Category
     if not db.session.get(Category, 'Default'):
-        db.session.add(Category(short_name='Default', icon='📑')) # Default icon: Bookmark Tabs emoji
+        db.session.add(Category(short_name='Default', icon='📑'))
+    # Bootstrap Maintenance Category
+    if not db.session.get(Category, 'Maintenance'):
+        db.session.add(Category(short_name='Maintenance', icon='🔧')) # Wrench icon
+
     db.session.commit()
 
 # --- Static File Serving (for Preact frontend) ---

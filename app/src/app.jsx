@@ -94,7 +94,8 @@ function TaskDefinitionForm({
   onClose,
   onSave,
   initialTaskDefinition,
-  availableCategories
+  availableCategories,
+  assetId
 }) {
   const [taskDefinition, setTaskDefinition] = useState({});
   const [taskType, setTaskType] = useState('one-off');
@@ -112,39 +113,51 @@ function TaskDefinitionForm({
         title: '',
         description: '',
         notes: '',
-        category_short_name: 'Default',
+        category_short_name: assetId ? 'Maintenance' : 'Default', // Default to Maintenance if assetId is present for new task
         priority: 'Medium',
-        due_date: tomorrowISO, // <<< CHANGED: Default to tomorrow for new tasks
-        recurrence_rule: null, 
+        due_date: tomorrowISO, 
+        recurrence_rule: null,
+        asset_id: assetId || null // Set asset_id if provided for new task
       };
 
       if (isEditing) {
         // When editing, populate form with existing data
         setTaskDefinition({
-          ...baseState,
+          // Start with base state that might include assetId from prop if we are editing a task that WASN'T linked
+          // but now SHOULD be linked because the form was opened from an asset's context.
+          // However, initialTaskDefinition.asset_id should take precedence if it exists.
+          ...baseState, 
           ...initialTaskDefinition,
-          // Ensure date is in YYYY-MM-DD for the input type='date'
           due_date: initialTaskDefinition.due_date 
             ? new Date(initialTaskDefinition.due_date).toISOString().split('T')[0] 
-            : '',
-          // Ensure recurrence_rule is an object, not null, if it exists, for easier access
+            : (assetId && !initialTaskDefinition.due_date ? '' : tomorrowISO), // If for asset, and no existing due_date, maybe blank, else tomorrow
           recurrence_rule: initialTaskDefinition.recurrence_rule || null, 
+          // Ensure asset_id from initialTaskDefinition takes precedence. 
+          // If not present, use assetId from prop (e.g. creating a new task for an asset, or editing an unlinked task from asset page)
+          asset_id: initialTaskDefinition.asset_id !== undefined && initialTaskDefinition.asset_id !== null 
+                        ? initialTaskDefinition.asset_id 
+                        : (assetId || null),
+          // If editing, and it's linked to an asset, ensure category is Maintenance unless already set to something else
+          category_short_name: initialTaskDefinition.asset_id !== undefined && initialTaskDefinition.asset_id !== null && (!initialTaskDefinition.category_short_name || initialTaskDefinition.category_short_name === 'Default')
+                                ? 'Maintenance' 
+                                : (initialTaskDefinition.category_short_name || baseState.category_short_name),
         });
         if (initialTaskDefinition.recurrence_rule) {
           setTaskType('recurring');
-        } else if (initialTaskDefinition.due_date) {
+        } else if (initialTaskDefinition.due_date || (assetId && !initialTaskDefinition.due_date && !initialTaskDefinition.recurrence_rule) ) {
           setTaskType('one-off');
         } else {
-          setTaskType('one-off'); // Default if somehow neither (should not happen with good data)
+          setTaskType('one-off');
         }
       } else {
-        // For new task, start with defaults (category will be 'Default')
+        // For new task, (isEditing is false)
+        // baseState already correctly sets asset_id from prop and category to Maintenance if assetId is present
         setTaskDefinition(baseState);
         setTaskType('one-off');
       }
-      setError(''); // Clear any previous errors when form opens/re-initializes
+      setError(''); 
     }
-  }, [isOpen, initialTaskDefinition, isEditing]);
+  }, [isOpen, initialTaskDefinition, isEditing, assetId]); // <<< assetId ADDED to dependency array
 
   // Effect to handle taskType changes
   useEffect(() => {
@@ -242,7 +255,7 @@ function TaskDefinitionForm({
     }
     
     console.log("[TaskDefinitionForm] Prepared payload:", payload);
-    onSave(payload, isEditing); 
+    onSave(payload, isEditing, assetId); 
   };
   
   if (!isOpen) return null;
@@ -765,12 +778,336 @@ const CategoryManagementPage = ({ categories, onUpdateCategories }) => {
   );
 };
 
+// --- Asset Management Page (NEW) ---
+const AssetManagementPage = ({ assets, onUpdateAssets, onNavigateToAssetDetail }) => {
+  const [isAssetFormOpen, setIsAssetFormOpen] = useState(false);
+  const [editingAsset, setEditingAsset] = useState(null); // Stores the asset being edited
+  const [error, setError] = useState(null);
+
+  const handleOpenNewAssetForm = () => {
+    setEditingAsset(null); // Clear any previous editing state
+    setIsAssetFormOpen(true);
+  };
+
+  const handleEditAsset = (asset) => {
+    setEditingAsset(asset);
+    setIsAssetFormOpen(true);
+  };
+
+  const handleSaveAsset = async (assetData, isEditing) => {
+    setError(null);
+    const url = isEditing ? `/api/assets/${assetData.id}` : '/api/assets';
+    const method = isEditing ? 'PUT' : 'POST';
+
+    try {
+      const response = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(assetData),
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || `Failed to ${isEditing ? 'update' : 'create'} asset`);
+      }
+      onUpdateAssets(); // Callback to refresh assets list in App component
+      setIsAssetFormOpen(false);
+      setEditingAsset(null);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteAsset = async (assetId) => {
+    if (!confirm('Are you sure you want to delete this asset? This may affect associated task definitions.')) {
+      return;
+    }
+    setError(null);
+    try {
+      const response = await fetch(`/api/assets/${assetId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to delete asset');
+      }
+      onUpdateAssets(); // Refresh asset list
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  if (!assets) {
+    return <p className="has-text-light">Loading assets...</p>;
+  }
+
+  return (
+    <section className="section">
+      <div className="level mb-5">
+        <div className="level-left">
+          <div className="level-item">
+            <h2 className="title is-3 has-text-light">Manage Assets</h2>
+          </div>
+        </div>
+        <div className="level-right">
+          <div className="level-item">
+            <button className="button is-primary" onClick={handleOpenNewAssetForm}>
+              <span className="icon is-small"><i className="fas fa-plus"></i></span>
+              <span>New Asset</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {error && <div className="notification is-danger is-light">{error}</div>}
+
+      {assets.length === 0 && !error && (
+        <div className="notification is-info is-light">
+            No assets defined yet. Click "New Asset" to add one.
+        </div>
+      )}
+
+      {assets.length > 0 && (
+        <div className="box has-background-grey-darker p-5">
+          <h3 className="title is-4 has-text-light">Existing Assets</h3>
+          {assets.map(asset => (
+            <div key={asset.id} className="card mb-3 has-background-dark">
+              <div className="card-content">
+                <div className="level">
+                  <div className="level-left">
+                    <div className="level-item">
+                        <div>
+                            <p className="title is-5 has-text-light"><a href="#" onClick={(e) => { e.preventDefault(); onNavigateToAssetDetail(asset.id); }}>{asset.name}</a></p>
+                            <p className="subtitle is-6 has-text-grey-lighter">{asset.description || 'No description'}</p>
+                        </div>
+                    </div>
+                  </div>
+                  <div className="level-right">
+                    <div className="level-item">
+                      <div className="buttons are-small">
+                        <button className="button is-info is-outlined" onClick={() => handleEditAsset(asset)}>Edit</button>
+                        <button className="button is-danger is-outlined" onClick={() => handleDeleteAsset(asset.id)}>Delete</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal isOpen={isAssetFormOpen} onClose={() => setIsAssetFormOpen(false)} title={editingAsset ? 'Edit Asset' : 'Add New Asset'}>
+        <AssetForm
+          isOpen={isAssetFormOpen} // Pass isOpen to AssetForm as well
+          onClose={() => {
+            setIsAssetFormOpen(false);
+            setEditingAsset(null); // Clear editing state on close
+          }}
+          onSave={handleSaveAsset}
+          initialAsset={editingAsset}
+          key={editingAsset ? editingAsset.id : 'new-asset'} // Key to force re-render
+        />
+      </Modal>
+    </section>
+  );
+};
+
+// --- NEW AssetForm Component ---
+function AssetForm({ isOpen, onClose, onSave, initialAsset }) {
+  const [asset, setAsset] = useState({ name: '', description: '' });
+  const [error, setError] = useState('');
+
+  const isEditing = !!initialAsset?.id;
+
+  useEffect(() => {
+    if (isOpen) {
+      if (isEditing) {
+        setAsset({ ...initialAsset });
+      } else {
+        setAsset({ name: '', description: '' });
+      }
+      setError('');
+    }
+  }, [isOpen, initialAsset, isEditing]);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setAsset(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (!asset.name?.trim()) {
+      setError('Asset name is required.');
+      return;
+    }
+    onSave(asset, isEditing);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <form onSubmit={handleSubmit}>
+      {error && <div className="notification is-danger is-light">{error}</div>}
+      <RenderField
+        id="assetName"
+        label="Asset Name *"
+        name="name"
+        value={asset.name}
+        onChange={handleChange}
+        required
+        placeholder="e.g., Main Computer, Kitchen Blender"
+      />
+      <RenderField
+        id="assetDescription"
+        label="Description (Optional)"
+        name="description"
+        type="textarea"
+        value={asset.description}
+        onChange={handleChange}
+        placeholder="e.g., Custom built PC, for tasks and gaming"
+      />
+      <div className="field is-grouped is-grouped-right mt-5">
+        <div className="control">
+          <button type="button" className="button is-light" onClick={onClose}>Cancel</button>
+        </div>
+        <div className="control">
+          <button type="submit" className="button is-primary">
+            {isEditing ? 'Save Changes' : 'Create Asset'}
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+}
+// END NEW AssetForm Component ---
+
+// --- NEW AssetDetailPage Component ---
+const AssetDetailPage = ({ assetDetail, onOpenTaskForm, availableCategories, onNavigateBack, onTaskStatusChange }) => {
+  if (!assetDetail) {
+    return <div className="notification is-warning">Asset details not available.</div>;
+  }
+
+  // Filter task definitions: those that are part of the main assetDetail.task_definitions (active/future)
+  // The backend currently embeds full task_definition objects if they are linked to the asset.
+  const activeTaskDefinitions = assetDetail.task_definitions || [];
+  const completedTaskInstances = assetDetail.completed_task_instances || [];
+
+  // We need a way to complete task instances from this page too.
+  // This would be similar to handleCompleteTaskInstance in App component.
+  // For now, we assume onTaskStatusChange passed from App will refresh data adequately.
+  const handleCompleteInstance = async (instanceId) => {
+    try {
+      const response = await fetch(`/api/task_instances/${instanceId}/complete`, { method: 'PUT' });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to complete task');
+      }
+      onTaskStatusChange(); // Prop to refresh data in parent
+    } catch (err) {
+      console.error("Error completing task instance from AssetDetailPage:", err);
+      alert(`Error: ${err.message}`); // Simple alert for now
+    }
+  };
+
+
+  return (
+    <section className="section">
+      <nav className="breadcrumb" aria-label="breadcrumbs">
+        <ul>
+          <li><a href="#" onClick={(e) => { e.preventDefault(); onNavigateBack(); }}>Assets</a></li>
+          <li className="is-active"><a href="#" aria-current="page">{assetDetail.name}</a></li>
+        </ul>
+      </nav>
+
+      <div className="level mb-4">
+        <div className="level-left">
+            <div className="level-item">
+                <h2 className="title is-2 has-text-light">{assetDetail.name}</h2>
+            </div>
+        </div>
+        <div className="level-right">
+            <div className="level-item">
+                <button className="button is-primary" onClick={onOpenTaskForm}>
+                    <span className="icon is-small"><i className="fas fa-plus"></i></span>
+                    <span>New Task for this Asset</span>
+                </button>
+            </div>
+        </div>
+      </div>
+
+      {assetDetail.description && (
+        <div className="content box has-background-grey-darker p-4 mb-5">
+          <h4 className="title is-5 has-text-light">Description</h4>
+          <p className="has-text-light">{assetDetail.description}</p>
+        </div>
+      )}
+
+      <div className="columns">
+        <div className="column is-half">
+          <div className="box has-background-grey-darker p-5">
+            <h3 className="title is-4 has-text-light mb-4">Active/Upcoming Tasks</h3>
+            {activeTaskDefinitions.length === 0 ? (
+              <p className="has-text-grey-lighter">No active or upcoming task definitions for this asset.</p>
+            ) : (
+              activeTaskDefinitions.map(def => (
+                // We can use TaskDefinitionItem here, or a more specialized display if needed
+                // For now, let's use a simplified version of TaskDefinitionItem or adapt it
+                <div key={def.id} className="box mb-3 has-background-dark p-3">
+                    <p className="title is-6 has-text-light">{def.title}</p>
+                    {def.description && <p className="subtitle is-7 has-text-grey-lighter">{def.description}</p>}
+                    <p className="is-size-7 has-text-grey-lighter">
+                        Category: {def.category ? `${def.category.icon || ''} ${def.category.short_name}`.trim() : 'N/A'} | 
+                        Priority: {def.priority || 'N/A'}
+                    </p>
+                    {def.due_date && <p className="is-size-7 has-text-grey-lighter">One-off Due: {new Date(def.due_date).toLocaleDateString()}</p>}
+                    {def.recurrence_rule && (
+                        <p className="is-size-7 has-text-grey-lighter">
+                        Recurring: {def.recurrence_rule.rule_type} 
+                        {def.recurrence_rule.weekly_recurring_day && ` (Day: ${def.recurrence_rule.weekly_recurring_day})`}
+                        {def.recurrence_rule.monthly_recurring_day && ` (Day: ${def.recurrence_rule.monthly_recurring_day})`}
+                        </p>
+                    )}
+                    {/* TODO: Add actions like edit/delete task definition if needed from here */}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="column is-half">
+          <div className="box has-background-grey-darker p-5">
+            <h3 className="title is-4 has-text-light mb-4">Completed Tasks</h3>
+            {completedTaskInstances.length === 0 ? (
+              <p className="has-text-grey-lighter">No completed tasks for this asset.</p>
+            ) : (
+              completedTaskInstances.map(instance => (
+                <div key={instance.id} className="box mb-3 has-background-dark p-3">
+                    <p className="title is-6 has-text-light">{instance.task_definition_title}</p>
+                    <p className="is-size-7 has-text-grey-lighter">
+                        Completed: {new Date(instance.completion_date).toLocaleString()} <br/>
+                        Originally Due: {new Date(instance.due_date).toLocaleDateString()}
+                    </p>
+                    {/* We could show more details from instance.to_dict() if needed */}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+    </section>
+  );
+};
+// END NEW AssetDetailPage Component ---
+
 // --- Main App Component with Navbar and Page State ---
 export function App() {
   const [taskDefinitions, setTaskDefinitions] = useState([]);
   const [taskInstances, setTaskInstances] = useState([]);
   const [settings, setSettings] = useState({});
-  const [categories, setCategories] = useState([]); // State for categories
+  const [categories, setCategories] = useState([]);
+  const [assets, setAssets] = useState([]); // <<< ADDED: State for assets
+  const [currentAssetDetail, setCurrentAssetDetail] = useState(null); // <<< NEW: For Asset Detail Page
 
   const [isTaskFormOpen, setIsTaskFormOpen] = useState(false);
   const [editingTaskDefinition, setEditingTaskDefinition] = useState(null);
@@ -779,34 +1116,44 @@ export function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const [currentPage, setCurrentPage] = useState('home'); // 'home', 'settings', 'categories'
+  const [currentPage, setCurrentPage] = useState('home'); // 'home', 'settings', 'categories', 'assets', 'assetDetail'
+  const [selectedAssetIdForDetail, setSelectedAssetIdForDetail] = useState(null); // <<< NEW: To trigger detail view
   const [isNavbarActive, setIsNavbarActive] = useState(false);
 
   const fetchData = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const [defsResponse, instancesResponse, settingsResponse, categoriesResponse] = await Promise.all([
+      const [defsResponse, instancesResponse, settingsResponse, categoriesResponse, assetsResponse] = await Promise.all([
         fetch('/api/task_definitions'),
         fetch('/api/task_instances'),
         fetch('/api/settings'),
-        fetch('/api/categories') // Fetch categories
+        fetch('/api/categories'),
+        fetch('/api/assets') // <<< ADDED: Fetch assets
       ]);
 
       if (!defsResponse.ok) throw new Error(`Task Definitions: ${defsResponse.statusText} (${defsResponse.status})`);
       if (!instancesResponse.ok) throw new Error(`Task Instances: ${instancesResponse.statusText} (${instancesResponse.status})`);
       if (!settingsResponse.ok) throw new Error(`Settings: ${settingsResponse.statusText} (${settingsResponse.status})`);
-      if (!categoriesResponse.ok) throw new Error(`Categories: ${categoriesResponse.statusText} (${categoriesResponse.status})`); // Check categoriesResponse
+      if (!categoriesResponse.ok) throw new Error(`Categories: ${categoriesResponse.statusText} (${categoriesResponse.status})`);
+      if (!assetsResponse.ok) throw new Error(`Assets: ${assetsResponse.statusText} (${assetsResponse.status})`); // <<< ADDED: Check assetsResponse
 
       const defsData = await defsResponse.json();
       const instancesData = await instancesResponse.json();
       const settingsData = await settingsResponse.json();
-      const categoriesData = await categoriesResponse.json(); // Parse categories JSON
+      const categoriesData = await categoriesResponse.json();
+      const assetsData = await assetsResponse.json(); // <<< ADDED: Parse assets JSON
 
       setTaskDefinitions(defsData);
       setTaskInstances(instancesData.sort((a, b) => new Date(a.due_date) - new Date(b.due_date)));
       setSettings(settingsData);
-      setCategories(categoriesData); // Set categories state
+      setCategories(categoriesData);
+      setAssets(assetsData); // <<< ADDED: Set assets state
+
+      // If navigating to an asset detail page, fetch its full details including completed tasks
+      if (selectedAssetIdForDetail && currentPage === 'assetDetail') {
+        fetchAssetDetails(selectedAssetIdForDetail);
+      }
 
     } catch (error) {
       console.error("Failed to fetch data:", error);
@@ -816,9 +1163,49 @@ export function App() {
     }
   };
 
+  // <<< NEW: Function to fetch specific asset details including completed tasks >>>
+  const fetchAssetDetails = async (assetId) => {
+    if (!assetId) {
+      setCurrentAssetDetail(null);
+      return;
+    }
+    setIsLoading(true); // Consider a more specific loading state for the detail page
+    setError(null);
+    try {
+      const [assetRes, completedTasksRes] = await Promise.all([
+        fetch(`/api/assets/${assetId}`),
+        fetch(`/api/assets/${assetId}/completed_task_instances`)
+      ]);
+
+      if (!assetRes.ok) throw new Error(`Asset Details: ${assetRes.statusText} (${assetRes.status})`);
+      if (!completedTasksRes.ok) throw new Error(`Completed Tasks for Asset: ${completedTasksRes.statusText} (${completedTasksRes.status})`);
+
+      const assetData = await assetRes.json();
+      const completedTasksData = await completedTasksRes.json();
+
+      setCurrentAssetDetail({ ...assetData, completed_task_instances: completedTasksData });
+
+    } catch (error) {
+      console.error(`Failed to fetch details for asset ${assetId}:`, error);
+      setError(error.message);
+      setCurrentAssetDetail(null); // Clear detail on error
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchData(); // Initial fetch
   }, []); // Runs once on mount
+
+  // <<< NEW: Effect to fetch asset details when selectedAssetIdForDetail changes >>>
+  useEffect(() => {
+    if (selectedAssetIdForDetail && currentPage === 'assetDetail') {
+      fetchAssetDetails(selectedAssetIdForDetail);
+    } else {
+      setCurrentAssetDetail(null); // Clear details if not on detail page or no ID
+    }
+  }, [selectedAssetIdForDetail, currentPage]);
 
   // Handler to refresh categories, passed to CategoryManagementPage
   const refreshCategories = () => {
@@ -931,6 +1318,23 @@ export function App() {
         return <SettingsPage />;
       case 'categories':
         return <CategoryManagementPage categories={categories} onUpdateCategories={refreshCategories} />;
+      case 'assets': // <<< ADDED: Assets page route
+        return <AssetManagementPage assets={assets} onUpdateAssets={fetchData} onNavigateToAssetDetail={(assetId) => { setSelectedAssetIdForDetail(assetId); setCurrentPage('assetDetail'); }} />;
+      case 'assetDetail': // <<< NEW: Asset Detail Page Route >>>
+        if (isLoading && !currentAssetDetail) return <div className="notification is-info is-light">Loading asset details... <progress className="progress is-small is-info" max="100"></progress></div>;
+        if (error && !currentAssetDetail) return <div className="notification is-danger">Error: {error}</div>;
+        if (!currentAssetDetail) return <div className="notification is-warning">Asset not found or details could not be loaded. <a onClick={() => setCurrentPage('assets')}>Go back to assets list.</a></div>;
+        return <AssetDetailPage 
+                  assetDetail={currentAssetDetail} 
+                  onOpenTaskForm={() => {
+                    setEditingTaskDefinition(null); // New task
+                    // Asset ID for the form will be handled by passing it to TaskDefinitionForm directly or via a new state if needed
+                    setIsTaskFormOpen(true); 
+                  }}
+                  availableCategories={categories}
+                  onNavigateBack={() => { setCurrentPage('assets'); setSelectedAssetIdForDetail(null); }}
+                  onTaskStatusChange={fetchData} // Refresh all data if a task instance status changes (e.g. complete)
+                />;
       case 'home':
       default:
         return (
@@ -997,11 +1401,14 @@ export function App() {
             <a className="navbar-item" href="#" onClick={() => { setCurrentPage('home'); setIsNavbarActive(false); }}>
               Home
             </a>
-            <a className="navbar-item" href="#" onClick={() => { setCurrentPage('settings'); setIsNavbarActive(false); }}>
-              Settings
+            <a className="navbar-item" href="#" onClick={() => { setCurrentPage('assets'); setIsNavbarActive(false); }}>
+              Assets
             </a>
             <a className="navbar-item" href="#" onClick={() => { setCurrentPage('categories'); setIsNavbarActive(false); }}>
               Manage Categories
+            </a>
+            <a className="navbar-item" href="#" onClick={() => { setCurrentPage('settings'); setIsNavbarActive(false); }}>
+              Settings
             </a>
           </div>
           <div className="navbar-end">
@@ -1028,8 +1435,9 @@ export function App() {
           onClose={() => setIsTaskFormOpen(false)}
           onSave={handleSaveTaskDefinition}
           initialTaskDefinition={editingTaskDefinition}
-          key={editingTaskDefinition ? editingTaskDefinition.id : 'new'}
+          key={editingTaskDefinition ? editingTaskDefinition.id : (selectedAssetIdForDetail && currentPage === 'assetDetail' ? `new-for-asset-${selectedAssetIdForDetail}` : 'new')} // More specific key
           availableCategories={categories} // Pass categories to the form
+          assetId={currentPage === 'assetDetail' && selectedAssetIdForDetail ? selectedAssetIdForDetail : null} // Pass assetId if on detail page
         />
       </Modal>
       <TaskInstanceDetailsModal
